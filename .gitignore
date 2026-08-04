@@ -1,0 +1,15 @@
+.env
+.browser_data/
+output/
+data/applied_history.json
+data/profile.json
+data/profile.local.json
+data/*_local.json
+data/tomorrow_plan.json
+.cursor/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.streamlit/secrets.toml

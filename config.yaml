@@ -1,0 +1,64 @@
+profile_path: data/profile.local.json
+cv_path: ""
+browser_data_dir: .browser_data
+output_dir: output
+linkedin:
+  max_applications_per_run: 15
+  delay_seconds_between_apps: 12
+  only_easy_apply: false
+  headless: false
+  keep_run_logs: 3
+  keep_browser_open: true
+  # Stop after these searches if nothing left — no infinite loop
+  searches:
+    - keywords: "intern"
+      location: "London, England, United Kingdom"
+      max: 10
+    - keywords: "graduate"
+      location: "London, England, United Kingdom"
+      max: 10
+    - keywords: "legal intern"
+      location: "London, England, United Kingdom"
+      max: 10
+    - keywords: "law intern"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "legal graduate"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "AI law"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "legal AI"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "software engineer"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "AI intern"
+      location: "London, England, United Kingdom"
+      max: 8
+    - keywords: "legal intern"
+      location: "United Kingdom"
+      max: 8
+    - keywords: "graduate"
+      location: "United Kingdom"
+      max: 8
+    - keywords: "legal intern"
+      location: "United States"
+      max: 5
+    - keywords: "AI law"
+      location: "United States"
+      max: 5
+defaults:
+  # Complete these in Profile & CV or data/profile.local.json before applying.
+  location: ""
+  keywords: ""
+  work_authorization: ""
+  require_sponsorship: ""
+  visa_type: ""
+  notice_period: ""
+  salary_expectation: ""
+  salary_range: ""
+  willing_to_relocate: ""
+  remote_preference: ""
