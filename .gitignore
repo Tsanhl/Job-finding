@@ -2,6 +2,8 @@
 .browser_data/
 output/
 tmp/
+.rendered_*/
+create_*_cover_letter.py
 
 # Candidate data and application materials stay local.  The only public data
 # file is the deliberately blank example profile.

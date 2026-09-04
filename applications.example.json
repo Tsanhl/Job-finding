@@ -1,0 +1,36 @@
+{
+  "applications": [
+    {
+      "id": "example-law-programme",
+      "application_type": "law",
+      "company": "Example LLP",
+      "role": "Vacation Scheme",
+      "url": "https://example.com/apply",
+      "office": "Example City",
+      "deadline": "YYYY-MM-DD",
+      "job_description": "Paste the official description and eligibility rules.",
+      "portal_questions": "Paste every question exactly, including its word or character limit.",
+      "cv_path": "",
+      "allow_ai": false,
+      "intake_confirmed": false,
+      "ai_policy_confirmed": false,
+      "manual_submit_confirmed": false
+    },
+    {
+      "id": "example-graduate-scheme",
+      "application_type": "graduate",
+      "company": "Example Organisation",
+      "role": "Graduate Scheme",
+      "url": "https://example.org/apply",
+      "office": "Example City",
+      "deadline": "YYYY-MM-DD",
+      "job_description": "Paste the official description and eligibility rules.",
+      "portal_questions": "Paste every question exactly, including its word or character limit.",
+      "cv_path": "",
+      "allow_ai": false,
+      "intake_confirmed": false,
+      "ai_policy_confirmed": false,
+      "manual_submit_confirmed": false
+    }
+  ]
+}

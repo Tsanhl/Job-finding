@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from src.answers import answer_many
@@ -10,6 +11,11 @@ from src.application_flow import (
     missing_academic_details,
     missing_application_details,
     readiness_message,
+)
+from src.application_workers import (
+    load_application_tasks,
+    run_application_batch,
+    validate_application_batch,
 )
 from src.browser_session import get_context
 from src.config import ensure_dirs, load_config
@@ -63,6 +69,15 @@ def main() -> None:
     p_ext.add_argument("--job-description-file", default="")
     p_ext.add_argument("--confirm", action="store_true")
     p_ext.add_argument("--no-ai", action="store_true")
+
+    p_batch = sub.add_parser(
+        "batch",
+        help="Prepare multiple direct applications with isolated local workers",
+    )
+    p_batch.add_argument("--applications-file", required=True)
+    p_batch.add_argument("--workers", type=int, default=2)
+    p_batch.add_argument("--confirm", action="store_true")
+    p_batch.add_argument("--no-ai", action="store_true")
 
     args = parser.parse_args()
     cfg = load_config()
@@ -205,6 +220,35 @@ def main() -> None:
             log=print,
         )
         print(detail)
+
+    elif args.cmd == "batch":
+        tasks = load_application_tasks(args.applications_file)
+        blockers = validate_application_batch(
+            tasks,
+            profile=profile,
+            default_cv_path=cfg["cv_path"],
+        )
+        if blockers:
+            print("Batch intake is incomplete:")
+            for task_id, questions in blockers.items():
+                print(f"\n{task_id}:")
+                print("\n".join(f"- {question}" for question in questions))
+            return
+        if not args.confirm:
+            print(
+                f"{len(tasks)} applications are ready. Re-run with --confirm to open "
+                "the local workers. Final submission remains manual."
+            )
+            return
+        summary = run_application_batch(
+            tasks,
+            profile=profile,
+            defaults=defaults,
+            default_cv_path=cfg["cv_path"],
+            worker_count=args.workers,
+            use_ai=not args.no_ai,
+        )
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

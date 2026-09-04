@@ -13,6 +13,11 @@ from src.application_flow import (
     missing_academic_details,
     missing_application_details,
 )
+from src.application_workers import (
+    load_application_tasks,
+    run_application_batch,
+    validate_application_batch,
+)
 from src.browser_session import get_context
 from src.config import ensure_dirs, load_config
 from src.cover_letter import generate_cover_letter, save_cover_letter
@@ -78,6 +83,7 @@ tabs = st.tabs(
         "Screening answers",
         "LinkedIn Easy Apply",
         "Direct Apply",
+        "Batch Apply",
         "Run logs",
     ]
 )
@@ -601,8 +607,91 @@ with tabs[4]:
         except Exception as exc:
             st.error(f"Direct application could not start: {exc}")
 
-# ---------- Logs ----------
+# ---------- Batch Apply ----------
 with tabs[5]:
+    profile = load_profile()
+    st.subheader("Multiple prepared applications")
+    st.info(
+        "Each application runs in its own local worker and browser tab. A maximum "
+        "of four workers can run together. Every item must pass its own intake, and "
+        "all final submissions remain manual."
+    )
+    batch_file = st.text_input(
+        "Local application queue JSON",
+        "applications.local.json",
+        key="batch_file",
+    )
+    batch_c1, batch_c2 = st.columns(2)
+    with batch_c1:
+        batch_workers = st.number_input(
+            "Concurrent workers",
+            min_value=1,
+            max_value=4,
+            value=2,
+            key="batch_workers",
+        )
+    with batch_c2:
+        batch_use_ai = st.checkbox(
+            "Use OpenAI only for applications whose checked policy permits it",
+            value=False,
+            key="batch_use_ai",
+        )
+
+    batch_tasks = []
+    batch_blockers: dict[str, list[str]] = {}
+    batch_error = ""
+    batch_path = Path(batch_file).expanduser() if batch_file.strip() else None
+    if batch_path and batch_path.is_file():
+        try:
+            batch_tasks = load_application_tasks(batch_path)
+            batch_blockers = validate_application_batch(
+                batch_tasks,
+                profile=profile,
+                default_cv_path=cfg["cv_path"],
+            )
+        except ValueError as exc:
+            batch_error = str(exc)
+    elif batch_file.strip():
+        batch_error = "Queue file not found. Copy applications.example.json to applications.local.json."
+
+    if batch_error:
+        st.warning(batch_error)
+    elif batch_tasks:
+        st.write(f"Loaded {len(batch_tasks)} application(s).")
+        if batch_blockers:
+            st.warning("Resolve these application-specific intake questions first:")
+            for task_id, questions in batch_blockers.items():
+                with st.expander(task_id, expanded=True):
+                    for question in questions:
+                        st.write(f"- {question}")
+        else:
+            st.success("Every queued application passed its individual intake.")
+
+    batch_confirmed = st.checkbox(
+        "Run the validated applications now; I will review and submit every tab manually",
+        value=False,
+        key="batch_confirmed",
+    )
+    batch_ready = bool(batch_tasks) and not batch_blockers and not batch_error and batch_confirmed
+    if st.button(
+        "Start local application workers",
+        type="primary",
+        disabled=not batch_ready,
+    ):
+        with st.spinner("Workers are preparing separate application tabs..."):
+            batch_summary = run_application_batch(
+                batch_tasks,
+                profile=profile,
+                defaults=dict(cfg.get("defaults", {})),
+                default_cv_path=cfg["cv_path"],
+                worker_count=int(batch_workers),
+                use_ai=batch_use_ai,
+            )
+        st.success("Batch preparation finished. Review every browser tab before submitting.")
+        st.json(batch_summary)
+
+# ---------- Logs ----------
+with tabs[6]:
     out = Path(cfg["output_dir"])
     files = sorted(out.glob("linkedin_run_*.json"), reverse=True)
     if not files:

@@ -6,6 +6,7 @@ Local job-application helper for a user-supplied CV and profile:
 2. Screening-question answers from the local profile/CV.
 3. Assisted LinkedIn Easy Apply and external ATS form filling through a logged-in Chromium session.
 4. A comprehensive direct-application intake for law programmes, graduate schemes, and other external roles, including structured university and A-level/IB/HKDSE/GCSE/other qualification results. The general question set is always available, while a missing academic fact blocks progress only when the pasted application instructions or portal questions request it.
+5. A local batch coordinator that can prepare several validated direct applications in separate browser tabs with up to four workers. Final submission remains manual for every application.
 
 The separate [`law_firm_application_agent`](law_firm_application_agent/) folder contains a privacy-safe UK law-firm prompt template and a non-destructive helper for creating a structured workspace for each firm and programme. Personalized prompts, candidate records, and application workspaces stay ignored and local.
 
@@ -41,9 +42,14 @@ python cli.py linkedin --keywords "legal intern" --location "London" --max 3 --c
 python cli.py linkedin --keywords "legal intern" --location "London" --max 3 --confirm --submit
 python cli.py external --url "https://example.com/apply" --company "Example" --role "Intern" --application-type graduate
 python cli.py external --url "https://example.com/apply" --company "Example" --role "Intern" --application-type graduate --confirm
+cp applications.example.json applications.local.json
+python cli.py batch --applications-file applications.local.json --workers 2
+python cli.py batch --applications-file applications.local.json --workers 2 --confirm
 ```
 
 The first `external` command prints the full intake questionnaire and does not open a browser. After answering and reviewing it, `--confirm` allows form filling. `--submit` is opt-in and applies only to Easy Apply. External ATS flows leave the final Submit action for the user.
+
+For a batch, complete each item in the ignored `applications.local.json`, including its exact portal questions, `allow_ai` choice, and the three confirmation flags. The first `batch` command validates every application without opening browser tabs. With `--confirm`, the coordinator opens up to four local workers. AI is used only when both the batch option and that application's `allow_ai` value are enabled. One invalid application prevents the batch from starting, so no worker bypasses intake.
 
 ## Safety
 
