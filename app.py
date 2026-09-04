@@ -6,9 +6,15 @@ from pathlib import Path
 import streamlit as st
 
 from src.answers import answer_many
-from src.application_flow import application_intake_questions, missing_application_details
+from src.application_flow import (
+    application_intake_questions,
+    direct_application_intake_questions,
+    missing_application_details,
+)
+from src.browser_session import get_context
 from src.config import ensure_dirs, load_config
 from src.cover_letter import generate_cover_letter, save_cover_letter
+from src.external_apply import fill_generic_application_form
 from src.linkedin_apply import run_linkedin_auto_apply, slugify
 from src.profile import extract_cv_text, load_profile, save_profile
 
@@ -37,7 +43,14 @@ with st.expander("Important notes", expanded=False):
     )
 
 tabs = st.tabs(
-    ["Profile & CV", "Cover letter", "Screening answers", "LinkedIn Easy Apply", "Run logs"]
+    [
+        "Profile & CV",
+        "Cover letter",
+        "Screening answers",
+        "LinkedIn Easy Apply",
+        "Direct Apply",
+        "Run logs",
+    ]
 )
 
 # ---------- Profile ----------
@@ -266,8 +279,150 @@ with tabs[3]:
             st.success(f"Finished: {len(summary.results)} job(s) processed")
             st.json(summary.to_dict())
 
-# ---------- Logs ----------
+# ---------- Direct Apply ----------
 with tabs[4]:
+    profile = load_profile()
+    st.subheader("Direct application (law, graduate scheme, or other role)")
+    st.info(
+        "Complete the intake first. The helper can fill verified facts and advance "
+        "through safe steps, but it leaves final submission, declarations, tests, "
+        "CAPTCHAs, and consent to you."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        application_type = st.selectbox(
+            "Application type",
+            options=["law", "graduate", "other"],
+            format_func=lambda value: {
+                "law": "Law firm programme",
+                "graduate": "Graduate scheme",
+                "other": "Other direct role",
+            }[value],
+        )
+        direct_company = st.text_input("Employer", key="direct_company")
+    with c2:
+        direct_role = st.text_input("Programme / role", key="direct_role")
+        direct_office = st.text_input("Office / location", key="direct_office")
+    with c3:
+        direct_deadline = st.text_input("Deadline", key="direct_deadline")
+        direct_use_ai = st.checkbox(
+            "Use OpenAI only if the employer permits it",
+            value=False,
+            key="direct_use_ai",
+        )
+
+    direct_url = st.text_input("Official application URL", key="direct_url")
+    direct_cv = st.text_input("Approved CV PDF to upload", cfg.get("cv_path", ""), key="direct_cv")
+    direct_job_context = st.text_area(
+        "Job description and eligibility rules",
+        height=140,
+        key="direct_job_context",
+    )
+    direct_portal_questions = st.text_area(
+        "Exact portal questions and word / character limits",
+        height=180,
+        key="direct_portal_questions",
+        placeholder="Paste every question exactly as displayed before starting the fill.",
+    )
+
+    direct_missing = missing_application_details(
+        profile,
+        direct_cv,
+        mode="external",
+        target_url=direct_url,
+    )
+    if not direct_company.strip():
+        direct_missing.append("Please provide the employer's exact name.")
+    if not direct_role.strip():
+        direct_missing.append("Please provide the programme or role title.")
+
+    st.subheader("Questions to answer before automation")
+    for question in direct_application_intake_questions(
+        profile,
+        direct_cv,
+        application_type=application_type,
+        target_url=direct_url,
+    ):
+        st.write(f"- {question}")
+
+    if direct_missing:
+        st.warning("The direct-apply browser cannot start yet:")
+        for item in direct_missing:
+            st.write(f"- {item}")
+
+    questions_complete = st.checkbox(
+        "I copied every portal question and limit, or confirmed that none are shown yet",
+        value=False,
+        key="direct_questions_complete",
+    )
+    facts_complete = st.checkbox(
+        "I reviewed the profile, eligibility answers, education, dates, and approved CV",
+        value=False,
+        key="direct_facts_complete",
+    )
+    policy_complete = st.checkbox(
+        "I checked the employer's AI policy and selected the AI option accordingly",
+        value=False,
+        key="direct_policy_complete",
+    )
+    manual_submit = st.checkbox(
+        "I understand that I must review and submit the application myself",
+        value=False,
+        key="direct_manual_submit",
+    )
+
+    direct_log_box = st.empty()
+    direct_logs: list[str] = []
+
+    def _direct_logger(msg: str) -> None:
+        direct_logs.append(msg)
+        direct_log_box.code("\n".join(direct_logs[-40:]), language="text")
+
+    direct_ready = (
+        not direct_missing
+        and questions_complete
+        and facts_complete
+        and policy_complete
+        and manual_submit
+    )
+    if st.button(
+        "Open and fill direct application",
+        type="primary",
+        disabled=not direct_ready,
+    ):
+        context_bits = [
+            f"Application type: {application_type}",
+            f"Employer: {direct_company}",
+            f"Programme or role: {direct_role}",
+            f"Office: {direct_office}",
+            f"Deadline: {direct_deadline}",
+            direct_job_context,
+            "Portal questions and limits:",
+            direct_portal_questions,
+        ]
+        try:
+            context = get_context(cfg["browser_data_dir"])
+            page = context.new_page()
+            page.goto(direct_url, wait_until="domcontentloaded", timeout=90000)
+            detail = fill_generic_application_form(
+                page,
+                profile=profile,
+                defaults=dict(cfg.get("defaults", {})),
+                cv_path=direct_cv,
+                job_context="\n".join(part for part in context_bits if part),
+                company=direct_company,
+                role=direct_role,
+                use_ai=direct_use_ai,
+                dry_run=False,
+                log=_direct_logger,
+            )
+            st.success(detail)
+        except Exception as exc:
+            st.error(f"Direct application could not start: {exc}")
+
+# ---------- Logs ----------
+with tabs[5]:
     out = Path(cfg["output_dir"])
     files = sorted(out.glob("linkedin_run_*.json"), reverse=True)
     if not files:

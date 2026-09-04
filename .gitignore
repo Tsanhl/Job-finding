@@ -1,14 +1,24 @@
 .env
 .browser_data/
 output/
-data/applied_history.json
-data/profile.json
-data/profile.local.json
-data/*_local.json
-data/tomorrow_plan.json
+tmp/
+
+# Candidate data and application materials stay local.  The only public data
+# file is the deliberately blank example profile.
+data/*
+!data/profile.example.json
+application_profile.json
+*_application_draft.md
+*_supporting_answers.md
+*.docx
+*.pdf
+*.local.*
+*.private.*
+
 .cursor/
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 .DS_Store

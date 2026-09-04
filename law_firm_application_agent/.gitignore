@@ -1,0 +1,5 @@
+# Candidate records and source-document references contain personal data.
+candidate.local.json
+MASTER_SYSTEM_PROMPT.md
+private/
+__pycache__/

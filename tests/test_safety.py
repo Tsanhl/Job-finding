@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 
 from src.answers import answer_question
-from src.application_flow import missing_application_details
+from src.application_flow import (
+    direct_application_intake_questions,
+    missing_application_details,
+)
 from src.cover_letter import generate_cover_letter_template
 
 
@@ -51,6 +54,30 @@ class SafetyFlowTests(unittest.TestCase):
             ),
             "",
         )
+
+    def test_law_direct_apply_always_asks_full_intake(self) -> None:
+        questions = direct_application_intake_questions(
+            {},
+            "",
+            application_type="law",
+            target_url="",
+        )
+        combined = " ".join(questions).lower()
+        self.assertIn("application question", combined)
+        self.assertIn("sponsorship", combined)
+        self.assertIn("module marks", combined)
+        self.assertIn("final submission", combined)
+
+    def test_graduate_direct_apply_includes_assessment_warning(self) -> None:
+        questions = direct_application_intake_questions(
+            {},
+            "",
+            application_type="graduate",
+            target_url="",
+        )
+        combined = " ".join(questions).lower()
+        self.assertIn("assessment centre", combined)
+        self.assertIn("competency", combined)
 
     def test_template_does_not_contain_candidate_specific_defaults(self) -> None:
         letter = generate_cover_letter_template({}, company="Example", role="Intern")

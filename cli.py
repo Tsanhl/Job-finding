@@ -5,7 +5,11 @@ import argparse
 from pathlib import Path
 
 from src.answers import answer_many
-from src.application_flow import missing_application_details, readiness_message
+from src.application_flow import (
+    direct_application_intake_questions,
+    missing_application_details,
+    readiness_message,
+)
 from src.browser_session import get_context
 from src.config import ensure_dirs, load_config
 from src.cover_letter import generate_cover_letter, save_cover_letter
@@ -47,8 +51,15 @@ def main() -> None:
 
     p_ext = sub.add_parser("external", help="Open and safely fill one external application")
     p_ext.add_argument("--url", required=True)
-    p_ext.add_argument("--company", default="the company")
-    p_ext.add_argument("--role", default="the role")
+    p_ext.add_argument("--company", default="")
+    p_ext.add_argument("--role", default="")
+    p_ext.add_argument(
+        "--application-type",
+        choices=("law", "graduate", "other"),
+        default="other",
+    )
+    p_ext.add_argument("--questions-file", default="")
+    p_ext.add_argument("--job-description-file", default="")
     p_ext.add_argument("--confirm", action="store_true")
     p_ext.add_argument("--no-ai", action="store_true")
 
@@ -135,13 +146,38 @@ def main() -> None:
             mode="external",
             target_url=args.url,
         )
+        if not args.company.strip():
+            missing.append("Please provide the employer's exact name with --company.")
+        if not args.role.strip():
+            missing.append("Please provide the programme or role with --role.")
+        intake = direct_application_intake_questions(
+            profile,
+            cfg["cv_path"],
+            application_type=args.application_type,
+            target_url=args.url,
+        )
+        print("Direct-application intake questions:")
+        print("\n".join(f"- {item}" for item in intake))
         if missing:
-            print("Before applying, please provide:")
+            print("\nBefore applying, please provide:")
             print("\n".join(f"- {item}" for item in missing))
             return
         if not args.confirm:
-            print("Preflight passed. Re-run with --confirm after reviewing the profile and CV.")
+            print(
+                "\nAnswer the intake questions, review the profile and approved CV, then "
+                "re-run with --confirm."
+            )
             return
+        portal_questions = (
+            Path(args.questions_file).read_text(encoding="utf-8")
+            if args.questions_file
+            else ""
+        )
+        job_description = (
+            Path(args.job_description_file).read_text(encoding="utf-8")
+            if args.job_description_file
+            else ""
+        )
         context = get_context(cfg["browser_data_dir"])
         page = context.new_page()
         page.goto(args.url, wait_until="domcontentloaded", timeout=90000)
@@ -150,7 +186,10 @@ def main() -> None:
             profile=profile,
             defaults=defaults,
             cv_path=cfg["cv_path"],
-            job_context=f"{args.role} at {args.company}",
+            job_context=(
+                f"{args.application_type} application: {args.role} at {args.company}\n"
+                f"{job_description}\nPortal questions and limits:\n{portal_questions}"
+            ),
             company=args.company,
             role=args.role,
             use_ai=not args.no_ai,

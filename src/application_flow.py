@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any
 
 
+DIRECT_APPLICATION_TYPES = {
+    "law": "law firm programme",
+    "graduate": "graduate scheme",
+    "other": "direct application",
+}
+
+
 def _value(profile: dict[str, Any], dotted: str) -> str:
     current: Any = profile
     for part in dotted.split("."):
@@ -91,6 +98,74 @@ def application_intake_questions(
         ]
     )
     return questions
+
+
+def direct_application_intake_questions(
+    profile: dict[str, Any],
+    cv_path: str | Path,
+    *,
+    application_type: str = "other",
+    target_url: str = "",
+) -> list[str]:
+    """Return the questions that must be reviewed before a direct application.
+
+    The questions are intentionally user-facing.  They form a mandatory intake
+    step for external law, graduate-scheme, and other direct applications; the
+    browser worker must not infer the answers.
+    """
+
+    kind = application_type.strip().lower()
+    if kind not in DIRECT_APPLICATION_TYPES:
+        kind = "other"
+
+    questions = missing_application_details(
+        profile,
+        cv_path,
+        mode="external",
+        target_url=target_url,
+    )
+    questions.extend(
+        [
+            "What is the employer's exact name, programme or role title, office, recruitment cycle, and deadline?",
+            "Do you meet every stated eligibility rule, and is any point uncertain?",
+            "Please confirm the personal details, education history, grades, and employment dates that this application may use.",
+            "Please confirm your right-to-work, visa or sponsorship position for this specific office and start date.",
+            "Please paste every application question exactly as shown, including each word or character limit.",
+            "Which verified experiences should support the motivation and competency answers, and is any detail still unconfirmed?",
+            "Have you previously applied to, worked with, been referred to, or declared a conflict involving this employer?",
+            "Do you want to disclose any reasonable-adjustment needs or choose 'Prefer not to say' for optional monitoring questions?",
+            "Which documents are requested (for example CV, cover letter, transcript, references, or portfolio), and are the approved versions ready?",
+            "What does the employer say about using AI in the application, and may AI be used only within that policy?",
+            "Should this run only prepare or fill a draft? Final submission, declarations, signatures, tests, CAPTCHAs, and consent always remain with you.",
+        ]
+    )
+
+    if kind == "law":
+        questions.extend(
+            [
+                "Why this firm and programme, which practice areas genuinely interest you, and what verified evidence supports those reasons?",
+                "Does the form require complete module marks, overseas-qualification equivalents, mitigating circumstances, or SQE details?",
+                "Which commercial-awareness topic can you discuss authentically, and how is it relevant to the firm?",
+            ]
+        )
+    elif kind == "graduate":
+        questions.extend(
+            [
+                "Why this organisation, scheme, and business area, and what verified evidence supports those reasons?",
+                "Which competency examples best demonstrate the scheme's stated strengths or behaviours?",
+                "Does the process include online tests, a video interview, or an assessment centre that must be completed personally?",
+            ]
+        )
+    else:
+        questions.extend(
+            [
+                "Why this organisation and role, and what verified evidence supports those reasons?",
+                "Which competency examples best match the role's essential criteria?",
+            ]
+        )
+
+    # Preserve order while avoiding a duplicate prompt if requirements overlap.
+    return list(dict.fromkeys(questions))
 
 
 def readiness_message(

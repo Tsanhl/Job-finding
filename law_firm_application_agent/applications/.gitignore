@@ -1,0 +1,3 @@
+# Application workspaces may contain personal data and should remain local.
+*
+!.gitignore
