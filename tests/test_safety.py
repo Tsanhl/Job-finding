@@ -99,6 +99,38 @@ class SafetyFlowTests(unittest.TestCase):
         }
         self.assertEqual(missing_academic_details(profile), [])
 
+    def test_live_preflight_does_not_block_when_form_has_no_academic_questions(self) -> None:
+        self.assertEqual(
+            missing_academic_details(
+                {},
+                application_text="Upload your CV and provide your availability.",
+                require_all=False,
+            ),
+            [],
+        )
+
+    def test_live_preflight_asks_only_when_portal_requests_academics(self) -> None:
+        missing = missing_academic_details(
+            {},
+            application_text="List all A-level subjects and grades.",
+            require_all=False,
+        )
+        combined = " ".join(missing).lower()
+        self.assertIn("school qualification system", combined)
+        self.assertIn("school subject", combined)
+        self.assertNotIn("university", combined)
+
+    def test_degree_request_does_not_require_unrequested_module_marks(self) -> None:
+        missing = missing_academic_details(
+            {},
+            application_text="What is your degree subject?",
+            require_all=False,
+        )
+        combined = " ".join(missing).lower()
+        self.assertIn("degree type and subject", combined)
+        self.assertNotIn("module", combined)
+        self.assertNotIn("school qualification", combined)
+
     def test_secondary_results_are_available_to_form_filling(self) -> None:
         profile = {
             "school_qualifications": {

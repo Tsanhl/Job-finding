@@ -70,8 +70,18 @@ def missing_application_details(
     return missing
 
 
-def missing_academic_details(profile: dict[str, Any]) -> list[str]:
-    """Return missing academic facts commonly required by graduate applications."""
+def missing_academic_details(
+    profile: dict[str, Any],
+    *,
+    application_text: str = "",
+    require_all: bool = True,
+) -> list[str]:
+    """Return academic facts missing from the local profile.
+
+    ``require_all`` supports profile setup and the comprehensive question list.
+    Live direct-application gates pass the portal text with ``require_all=False``
+    so academic facts are required only when that application asks for them.
+    """
 
     missing: list[str] = []
     education = profile.get("education") or {}
@@ -82,45 +92,133 @@ def missing_academic_details(profile: dict[str, Any]) -> list[str]:
     if not isinstance(secondary, dict):
         secondary = {}
 
-    if not str(education.get("institution") or education.get("school") or "").strip():
-        missing.append("Please provide your university or higher-education institution.")
-    if not str(
-        education.get("degree")
-        or education.get("degree_type")
-        or education.get("subject")
-        or ""
-    ).strip():
-        missing.append("Please provide your degree type and subject, or state that this is not applicable.")
-    if not str(education.get("start") or "").strip():
-        missing.append("Please provide your university start month and year.")
-    if not str(education.get("end") or "").strip():
-        missing.append("Please provide your graduation or expected completion month and year.")
-    if not str(
-        education.get("classification")
-        or education.get("overall_mark")
-        or education.get("status")
-        or ""
-    ).strip():
-        missing.append(
-            "Please provide your achieved or predicted degree classification/overall mark, or mark it pending."
+    text = " ".join(application_text.lower().split())
+    broad_academic_request = any(
+        term in text
+        for term in (
+            "academic history",
+            "education history",
+            "full education",
+            "all qualifications",
+            "academic qualifications",
         )
-    if not (education.get("modules") or education.get("highlights")):
-        missing.append(
-            "Please provide every university module and achieved/predicted mark requested by graduate forms."
+    )
+    university_institution_requested = require_all or broad_academic_request or any(
+        term in text for term in ("university", "higher-education institution", "higher education institution")
+    )
+    degree_requested = require_all or broad_academic_request or any(
+        term in text for term in ("degree", "undergraduate qualification", "degree subject")
+    )
+    university_dates_requested = require_all or broad_academic_request or any(
+        term in text
+        for term in (
+            "university start",
+            "degree start",
+            "university end",
+            "degree end",
+            "graduation date",
+            "graduation year",
+            "degree completion",
         )
+    )
+    university_result_requested = require_all or broad_academic_request or any(
+        term in text
+        for term in (
+            "degree classification",
+            "degree grade",
+            "overall average",
+            "overall mark",
+            "university result",
+            "predicted degree",
+        )
+    )
+    modules_requested = require_all or broad_academic_request or "module" in text
 
-    if not str(secondary.get("type") or "").strip():
-        missing.append(
-            "Please identify your school qualification system: A levels, IB, HKDSE, GCSEs, or another qualification."
+    secondary_mentioned = any(
+        term in f" {text} "
+        for term in (
+            "a level",
+            "a-level",
+            "alevel",
+            "international baccalaureate",
+            " ib ",
+            "hkdse",
+            "dse",
+            "gcse",
+            "secondary school",
+            "school qualification",
+            "school result",
         )
-    if not str(secondary.get("school") or "").strip():
-        missing.append("Please provide the school where those qualifications were completed.")
-    if not str(secondary.get("completion_year") or "").strip():
-        missing.append("Please provide the completion year for your school qualifications.")
-    if not secondary.get("results"):
-        missing.append(
-            "Please provide every school subject and its achieved/predicted grade or mark."
+    )
+    secondary_type_requested = require_all or broad_academic_request or secondary_mentioned
+    secondary_school_requested = require_all or broad_academic_request or any(
+        term in text for term in ("secondary school", "school name", "school attended")
+    )
+    secondary_year_requested = require_all or broad_academic_request or any(
+        term in text
+        for term in (
+            "qualification year",
+            "year awarded",
+            "date awarded",
+            "school completion",
+            "year completed",
         )
+    )
+    secondary_results_requested = require_all or broad_academic_request or (
+        secondary_mentioned
+        and any(term in text for term in ("subject", "grade", "mark", "result"))
+    )
+
+    if university_institution_requested:
+        if not str(education.get("institution") or education.get("school") or "").strip():
+            missing.append("Please provide your university or higher-education institution.")
+    if degree_requested:
+        if not str(
+            education.get("degree")
+            or education.get("degree_type")
+            or education.get("subject")
+            or ""
+        ).strip():
+            missing.append(
+                "Please provide your degree type and subject, or state that this is not applicable."
+            )
+    if university_dates_requested:
+        if not str(education.get("start") or "").strip():
+            missing.append("Please provide your university start month and year.")
+        if not str(education.get("end") or "").strip():
+            missing.append("Please provide your graduation or expected completion month and year.")
+    if university_result_requested:
+        if not str(
+            education.get("classification")
+            or education.get("overall_mark")
+            or education.get("status")
+            or ""
+        ).strip():
+            missing.append(
+                "Please provide your achieved or predicted degree classification/overall mark, or mark it pending."
+            )
+    if modules_requested:
+        if not (education.get("modules") or education.get("highlights")):
+            missing.append(
+                "Please provide every university module and achieved/predicted mark requested by this form."
+            )
+
+    if secondary_type_requested:
+        if not str(secondary.get("type") or "").strip():
+            missing.append(
+                "Please identify your school qualification system: A levels, IB, HKDSE, GCSEs, or another qualification."
+            )
+    if secondary_school_requested:
+        if not str(secondary.get("school") or "").strip():
+            missing.append("Please provide the school where those qualifications were completed.")
+    if secondary_year_requested:
+        if not str(secondary.get("completion_year") or "").strip():
+            missing.append("Please provide the completion year for your school qualifications.")
+    if secondary_results_requested:
+        if not secondary.get("results"):
+            missing.append(
+                "Please provide every school subject and its achieved/predicted grade or mark."
+            )
 
     return missing
 
@@ -179,8 +277,6 @@ def direct_application_intake_questions(
         mode="external",
         target_url=target_url,
     )
-    if kind in {"law", "graduate"}:
-        questions.extend(missing_academic_details(profile))
     questions.extend(
         [
             "What is the employer's exact name, programme or role title, office, recruitment cycle, and deadline?",

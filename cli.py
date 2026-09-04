@@ -141,6 +141,16 @@ def main() -> None:
         print(summary.to_dict())
 
     elif args.cmd == "external":
+        portal_questions = (
+            Path(args.questions_file).read_text(encoding="utf-8")
+            if args.questions_file
+            else ""
+        )
+        job_description = (
+            Path(args.job_description_file).read_text(encoding="utf-8")
+            if args.job_description_file
+            else ""
+        )
         missing = missing_application_details(
             profile,
             cfg["cv_path"],
@@ -151,8 +161,13 @@ def main() -> None:
             missing.append("Please provide the employer's exact name with --company.")
         if not args.role.strip():
             missing.append("Please provide the programme or role with --role.")
-        if args.application_type in {"law", "graduate"}:
-            missing.extend(missing_academic_details(profile))
+        missing.extend(
+            missing_academic_details(
+                profile,
+                application_text=f"{job_description}\n{portal_questions}",
+                require_all=False,
+            )
+        )
         intake = direct_application_intake_questions(
             profile,
             cfg["cv_path"],
@@ -171,16 +186,6 @@ def main() -> None:
                 "re-run with --confirm."
             )
             return
-        portal_questions = (
-            Path(args.questions_file).read_text(encoding="utf-8")
-            if args.questions_file
-            else ""
-        )
-        job_description = (
-            Path(args.job_description_file).read_text(encoding="utf-8")
-            if args.job_description_file
-            else ""
-        )
         context = get_context(cfg["browser_data_dir"])
         page = context.new_page()
         page.goto(args.url, wait_until="domcontentloaded", timeout=90000)

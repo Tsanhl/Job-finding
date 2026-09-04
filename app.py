@@ -508,8 +508,13 @@ with tabs[4]:
         direct_missing.append("Please provide the employer's exact name.")
     if not direct_role.strip():
         direct_missing.append("Please provide the programme or role title.")
-    if application_type in {"law", "graduate"}:
-        direct_missing.extend(missing_academic_details(profile))
+    direct_missing.extend(
+        missing_academic_details(
+            profile,
+            application_text=f"{direct_job_context}\n{direct_portal_questions}",
+            require_all=False,
+        )
+    )
     direct_missing = list(dict.fromkeys(direct_missing))
 
     st.subheader("Questions to answer before automation")

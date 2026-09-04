@@ -5,7 +5,7 @@ Local job-application helper for a user-supplied CV and profile:
 1. Tailored cover letters, using a template or OpenAI when enabled.
 2. Screening-question answers from the local profile/CV.
 3. Assisted LinkedIn Easy Apply and external ATS form filling through a logged-in Chromium session.
-4. A mandatory direct-application intake for law programmes, graduate schemes, and other external roles, including structured university and A-level/IB/HKDSE/GCSE/other qualification results.
+4. A comprehensive direct-application intake for law programmes, graduate schemes, and other external roles, including structured university and A-level/IB/HKDSE/GCSE/other qualification results. The general question set is always available, while a missing academic fact blocks progress only when the pasted application instructions or portal questions request it.
 
 The separate [`law_firm_application_agent`](law_firm_application_agent/) folder contains a privacy-safe UK law-firm prompt template and a non-destructive helper for creating a structured workspace for each firm and programme. Personalized prompts, candidate records, and application workspaces stay ignored and local.
 
