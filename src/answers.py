@@ -39,6 +39,191 @@ RULES: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+SECONDARY_TERMS = (
+    "a level",
+    "a-level",
+    "alevel",
+    "international baccalaureate",
+    " ib ",
+    "hkdse",
+    "dse",
+    "gcse",
+    "secondary school",
+    "school qualification",
+)
+
+
+def _result_items(value: Any, *, name_key: str, result_key: str) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = str(item.get(name_key) or item.get("name") or "").strip()
+            result = str(item.get(result_key) or item.get("result") or "").strip()
+            year = str(item.get("year") or "").strip()
+        else:
+            name = str(item).strip()
+            result = ""
+            year = ""
+        if name or result:
+            items.append({"name": name, "result": result, "year": year})
+    return items
+
+
+def _format_results(items: list[dict[str, str]]) -> str:
+    formatted: list[str] = []
+    for item in items:
+        value = item["name"]
+        if item["result"]:
+            value = f"{value}: {item['result']}" if value else item["result"]
+        if item["year"]:
+            value = f"{value} ({item['year']})"
+        if value:
+            formatted.append(value)
+    return "; ".join(formatted)
+
+
+def _numbered_field_index(question: str, field: str) -> int | None:
+    match = re.search(rf"{field}[^0-9]{{0,20}}(\d+)", question)
+    if not match:
+        return None
+    number = int(match.group(1))
+    return 0 if number == 0 else number - 1
+
+
+def _indexed_result(
+    question: str,
+    items: list[dict[str, str]],
+    *,
+    fields: tuple[str, ...],
+    value_key: str,
+) -> str | None:
+    for field in fields:
+        index = _numbered_field_index(question, field)
+        if index is not None and index < len(items):
+            return items[index].get(value_key) or None
+    return None
+
+
+def _academic_answer(question: str, profile: dict[str, Any]) -> str | None:
+    """Answer academic fields only from structured, candidate-confirmed facts."""
+
+    education = profile.get("education") or {}
+    secondary = profile.get("school_qualifications") or {}
+    if not isinstance(education, dict):
+        education = {}
+    if not isinstance(secondary, dict):
+        secondary = {}
+
+    is_secondary = any(term in f" {question} " for term in SECONDARY_TERMS)
+    secondary_results = _result_items(
+        secondary.get("results"),
+        name_key="subject",
+        result_key="grade",
+    )
+    if is_secondary:
+        if any(term in question for term in ("qualification type", "qualification system", "exam type")):
+            return str(secondary.get("type") or "").strip() or None
+        indexed_subject = _indexed_result(
+            question,
+            secondary_results,
+            fields=("subject", "qualification"),
+            value_key="name",
+        )
+        if indexed_subject:
+            return indexed_subject
+        indexed_grade = _indexed_result(
+            question,
+            secondary_results,
+            fields=("grade", "mark", "result"),
+            value_key="result",
+        )
+        if indexed_grade:
+            return indexed_grade
+        if "school" in question or "institution" in question:
+            return str(secondary.get("school") or "").strip() or None
+        if "country" in question:
+            return str(secondary.get("country") or "").strip() or None
+        if any(term in question for term in ("completion", "completed", "year awarded", "date awarded")):
+            return str(secondary.get("completion_year") or "").strip() or None
+        if "grading scale" in question:
+            return str(secondary.get("grading_scale") or "").strip() or None
+        if any(term in question for term in ("resit", "retake", "re-sit")):
+            return str(secondary.get("resits") or "").strip() or None
+        if any(term in question for term in ("predicted", "achieved", "status")):
+            return str(secondary.get("status") or "").strip() or None
+        if any(term in question for term in ("subject", "grade", "mark", "result", "qualification")):
+            return _format_results(secondary_results) or None
+
+    university_terms = (
+        "university",
+        "higher education",
+        "undergraduate",
+        "degree",
+        "module",
+        "course",
+    )
+    if any(term in question for term in university_terms):
+        modules = _result_items(
+            education.get("modules") or education.get("highlights"),
+            name_key="name",
+            result_key="mark",
+        )
+        if "module" in question:
+            if any(term in question for term in ("grade", "mark", "result")):
+                indexed_mark = _indexed_result(
+                    question,
+                    modules,
+                    fields=("grade", "mark", "result"),
+                    value_key="result",
+                )
+                if indexed_mark:
+                    return indexed_mark
+            else:
+                indexed_module = _indexed_result(
+                    question,
+                    modules,
+                    fields=("module", "subject"),
+                    value_key="name",
+                )
+                if indexed_module:
+                    return indexed_module
+            return _format_results(modules) or None
+        if "institution" in question or "university name" in question:
+            return str(education.get("institution") or education.get("school") or "").strip() or None
+        if "country" in question:
+            return str(education.get("country") or "").strip() or None
+        if "degree type" in question or "qualification type" in question:
+            return str(education.get("degree_type") or education.get("degree") or "").strip() or None
+        if "subject" in question or "course" in question:
+            return str(education.get("subject") or education.get("degree") or "").strip() or None
+        if "classification" in question or "degree grade" in question:
+            return str(education.get("classification") or "").strip() or None
+        if any(term in question for term in ("overall mark", "overall average", "percentage")):
+            return str(education.get("overall_mark") or "").strip() or None
+        if any(term in question for term in ("start date", "start year", "started")):
+            return str(education.get("start") or "").strip() or None
+        if any(term in question for term in ("end date", "end year", "graduation", "completion")):
+            return str(education.get("end") or "").strip() or None
+        if "status" in question or "predicted" in question:
+            return str(education.get("status") or education.get("classification") or "").strip() or None
+        if "degree" in question:
+            return str(
+                education.get("degree")
+                or " ".join(
+                    value
+                    for value in (
+                        str(education.get("degree_type") or "").strip(),
+                        str(education.get("subject") or "").strip(),
+                    )
+                    if value
+                )
+            ).strip() or None
+
+    return None
+
+
 def _get_path(data: dict[str, Any], dotted: str) -> Any:
     cur: Any = data
     for part in dotted.split("."):
@@ -65,6 +250,10 @@ def answer_from_profile(
                 "Yes" if "yes" in str(defaults["work_authorization"]).lower()[:3] else "No"
             )
         merged["answers"] = answers
+
+    academic = _academic_answer(q, merged)
+    if academic:
+        return academic
 
     for keys, path in RULES:
         if any(k in q for k in keys):

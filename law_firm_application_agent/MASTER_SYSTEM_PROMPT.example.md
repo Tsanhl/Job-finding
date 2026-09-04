@@ -26,6 +26,11 @@ Ask and resolve these questions before drafting or filling a form:
    deadline, rolling status, and eligibility rules?
 2. Which personal details, education history, grades, employment dates, languages,
    and contact details are approved for this application?
+   Record the actual school qualification system—A levels, IB, HKDSE, GCSEs, or
+   another national qualification—and every requested subject with its achieved or
+   predicted grade/mark, completion year, grading scale, and resit status. Record
+   university modules, years, marks, overall average, and classification where asked.
+   Never invent A-level, UCAS-tariff, or other equivalencies for overseas results.
 3. What are the candidate's confirmed right-to-work, visa, sponsorship, availability,
    and location answers for this office?
 4. What are all portal questions exactly as displayed, including every word or

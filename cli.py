@@ -7,6 +7,7 @@ from pathlib import Path
 from src.answers import answer_many
 from src.application_flow import (
     direct_application_intake_questions,
+    missing_academic_details,
     missing_application_details,
     readiness_message,
 )
@@ -150,6 +151,8 @@ def main() -> None:
             missing.append("Please provide the employer's exact name with --company.")
         if not args.role.strip():
             missing.append("Please provide the programme or role with --role.")
+        if args.application_type in {"law", "graduate"}:
+            missing.extend(missing_academic_details(profile))
         intake = direct_application_intake_questions(
             profile,
             cfg["cv_path"],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Callable
 
@@ -162,6 +163,31 @@ def fill_generic_application_form(
                 return str(value).strip().title()
         return None
 
+    def matching_option(options: list[str], answer: str) -> str | None:
+        """Match a confirmed answer to a dropdown without choosing by guesswork."""
+
+        def normalise(value: str) -> str:
+            value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+            value = value.replace("a levels", "a level")
+            value = value.replace("international baccalaureate", "ib")
+            return " ".join(value.split())
+
+        wanted = normalise(answer)
+        if not wanted:
+            return None
+        exact = next((option for option in options if normalise(option) == wanted), None)
+        if exact:
+            return exact
+        if len(wanted) >= 4:
+            candidates = [
+                option
+                for option in options
+                if wanted in normalise(option) or normalise(option) in wanted
+            ]
+            if len(candidates) == 1:
+                return candidates[0]
+        return None
+
     actions: list[str] = []
     for step in range(8):
         if looks_like_signup_wall(page) and not wait_for_manual_login(page, log=log):
@@ -219,12 +245,18 @@ def fill_generic_application_form(
                     label = el.evaluate(
                         """(n) => {
                           const id = n.id;
+                          let ownLabel = '';
                           if (id) {
                             const l = document.querySelector(`label[for="${id}"]`);
-                            if (l) return l.innerText;
+                            if (l) ownLabel = l.innerText || '';
                           }
                           const wrap = n.closest('label,div,li,fieldset');
-                          return wrap ? (wrap.querySelector('label,span')?.innerText || '') : '';
+                          const nearby = wrap ? (wrap.querySelector('label,span')?.innerText || '') : '';
+                          const fieldset = n.closest('fieldset');
+                          const legend = fieldset ? (fieldset.querySelector('legend')?.innerText || '') : '';
+                          const section = n.closest('section,[role="group"]');
+                          const heading = section ? (section.querySelector('h1,h2,h3,h4')?.innerText || '') : '';
+                          return [heading, legend, ownLabel, nearby].filter(Boolean).join(' ');
                         }"""
                     )
                     meta = (meta + " " + (label or "")).lower()
@@ -298,6 +330,16 @@ def fill_generic_application_form(
                         (t for t in opts if "prefer not" in t.lower() or t.lower() == "no"),
                         None,
                     )
+                else:
+                    confirmed_answer = answer_question(
+                        label,
+                        profile,
+                        job_context=job_context,
+                        defaults=defaults,
+                        use_ai=False,
+                    )
+                    if confirmed_answer:
+                        choice = matching_option(opts, confirmed_answer)
                 if choice:
                     sel.select_option(label=choice)
             except Exception:

@@ -70,6 +70,61 @@ def missing_application_details(
     return missing
 
 
+def missing_academic_details(profile: dict[str, Any]) -> list[str]:
+    """Return missing academic facts commonly required by graduate applications."""
+
+    missing: list[str] = []
+    education = profile.get("education") or {}
+    secondary = profile.get("school_qualifications") or {}
+
+    if not isinstance(education, dict):
+        education = {}
+    if not isinstance(secondary, dict):
+        secondary = {}
+
+    if not str(education.get("institution") or education.get("school") or "").strip():
+        missing.append("Please provide your university or higher-education institution.")
+    if not str(
+        education.get("degree")
+        or education.get("degree_type")
+        or education.get("subject")
+        or ""
+    ).strip():
+        missing.append("Please provide your degree type and subject, or state that this is not applicable.")
+    if not str(education.get("start") or "").strip():
+        missing.append("Please provide your university start month and year.")
+    if not str(education.get("end") or "").strip():
+        missing.append("Please provide your graduation or expected completion month and year.")
+    if not str(
+        education.get("classification")
+        or education.get("overall_mark")
+        or education.get("status")
+        or ""
+    ).strip():
+        missing.append(
+            "Please provide your achieved or predicted degree classification/overall mark, or mark it pending."
+        )
+    if not (education.get("modules") or education.get("highlights")):
+        missing.append(
+            "Please provide every university module and achieved/predicted mark requested by graduate forms."
+        )
+
+    if not str(secondary.get("type") or "").strip():
+        missing.append(
+            "Please identify your school qualification system: A levels, IB, HKDSE, GCSEs, or another qualification."
+        )
+    if not str(secondary.get("school") or "").strip():
+        missing.append("Please provide the school where those qualifications were completed.")
+    if not str(secondary.get("completion_year") or "").strip():
+        missing.append("Please provide the completion year for your school qualifications.")
+    if not secondary.get("results"):
+        missing.append(
+            "Please provide every school subject and its achieved/predicted grade or mark."
+        )
+
+    return missing
+
+
 def application_intake_questions(
     profile: dict[str, Any],
     cv_path: str | Path,
@@ -124,11 +179,17 @@ def direct_application_intake_questions(
         mode="external",
         target_url=target_url,
     )
+    if kind in {"law", "graduate"}:
+        questions.extend(missing_academic_details(profile))
     questions.extend(
         [
             "What is the employer's exact name, programme or role title, office, recruitment cycle, and deadline?",
             "Do you meet every stated eligibility rule, and is any point uncertain?",
             "Please confirm the personal details, education history, grades, and employment dates that this application may use.",
+            "Which school qualification system applies: A levels, International Baccalaureate, HKDSE, GCSEs, or another national qualification?",
+            "Please list every school qualification subject with its achieved or predicted grade/mark, completion year, grading scale, and any resits the form requires.",
+            "Please list every university module with its year and achieved or predicted mark, plus the degree classification and overall average where requested.",
+            "Does the employer require qualification equivalencies or tariff points? Use only an official conversion supplied by the employer or awarding body; never invent one.",
             "Please confirm your right-to-work, visa or sponsorship position for this specific office and start date.",
             "Please paste every application question exactly as shown, including each word or character limit.",
             "Which verified experiences should support the motivation and competency answers, and is any detail still unconfirmed?",

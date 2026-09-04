@@ -4,9 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.answers import answer_question
+from src.answers import answer_from_profile, answer_question
 from src.application_flow import (
     direct_application_intake_questions,
+    missing_academic_details,
     missing_application_details,
 )
 from src.cover_letter import generate_cover_letter_template
@@ -78,6 +79,65 @@ class SafetyFlowTests(unittest.TestCase):
         combined = " ".join(questions).lower()
         self.assertIn("assessment centre", combined)
         self.assertIn("competency", combined)
+
+    def test_academic_preflight_accepts_other_school_qualification_systems(self) -> None:
+        profile = {
+            "education": {
+                "institution": "Example University",
+                "degree": "Example Degree",
+                "start": "2022-09",
+                "end": "2025-06",
+                "classification": "Pending",
+                "modules": [{"name": "Example Module", "mark": "Pending"}],
+            },
+            "school_qualifications": {
+                "type": "International Baccalaureate",
+                "school": "Example School",
+                "completion_year": "2022",
+                "results": [{"subject": "Mathematics", "grade": "6"}],
+            },
+        }
+        self.assertEqual(missing_academic_details(profile), [])
+
+    def test_secondary_results_are_available_to_form_filling(self) -> None:
+        profile = {
+            "school_qualifications": {
+                "type": "A levels",
+                "results": [
+                    {"subject": "Mathematics", "grade": "A*"},
+                    {"subject": "History", "grade": "A"},
+                ],
+            }
+        }
+        self.assertEqual(
+            answer_from_profile("A-level subject 1", profile),
+            "Mathematics",
+        )
+        self.assertEqual(
+            answer_from_profile("A-level grade 2", profile),
+            "A",
+        )
+        self.assertIn(
+            "Mathematics: A*",
+            answer_from_profile("List all A-level subjects and grades", profile) or "",
+        )
+
+    def test_university_module_marks_are_available_to_form_filling(self) -> None:
+        profile = {
+            "education": {
+                "modules": [
+                    {"name": "Contract Law", "mark": "70", "year": "2"},
+                ]
+            }
+        }
+        self.assertEqual(
+            answer_from_profile("University module 1", profile),
+            "Contract Law",
+        )
+        self.assertEqual(
+            answer_from_profile("University module mark 1", profile),
+            "70",
+        )
 
     def test_template_does_not_contain_candidate_specific_defaults(self) -> None:
         letter = generate_cover_letter_template({}, company="Example", role="Intern")

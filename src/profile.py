@@ -53,6 +53,7 @@ def profile_as_prompt_block(profile: dict[str, Any]) -> str:
         f"Location: {profile.get('location')}\n"
         f"Summary: {profile.get('summary')}\n"
         f"Education: {json.dumps(profile.get('education', {}), ensure_ascii=False)}\n"
+        f"School qualifications: {json.dumps(profile.get('school_qualifications', {}), ensure_ascii=False)}\n"
         f"Skills: {', '.join(profile.get('skills', []))}\n"
         f"Experience:\n- " + "\n- ".join(profile.get("experience_highlights", []))
     )

@@ -15,11 +15,28 @@
   "languages": [],
   "education": {
     "school": "",
+    "institution": "",
+    "country": "",
+    "degree_type": "",
+    "subject": "",
     "degree": "",
     "classification": "",
+    "overall_mark": "",
+    "status": "",
     "start": "",
     "end": "",
-    "highlights": []
+    "highlights": [],
+    "modules": []
+  },
+  "school_qualifications": {
+    "type": "",
+    "school": "",
+    "country": "",
+    "completion_year": "",
+    "grading_scale": "",
+    "status": "",
+    "resits": "",
+    "results": []
   },
   "summary": "",
   "skills": [],

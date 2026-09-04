@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -9,6 +10,7 @@ from src.answers import answer_many
 from src.application_flow import (
     application_intake_questions,
     direct_application_intake_questions,
+    missing_academic_details,
     missing_application_details,
 )
 from src.browser_session import get_context
@@ -17,6 +19,33 @@ from src.cover_letter import generate_cover_letter, save_cover_letter
 from src.external_apply import fill_generic_application_form
 from src.linkedin_apply import run_linkedin_auto_apply, slugify
 from src.profile import extract_cv_text, load_profile, save_profile
+
+
+def _format_academic_rows(rows: Any, keys: tuple[str, ...]) -> str:
+    if not isinstance(rows, list):
+        return ""
+    lines: list[str] = []
+    for row in rows:
+        if isinstance(row, dict):
+            values = [str(row.get(key) or "").strip() for key in keys]
+        else:
+            values = [str(row).strip()]
+        if any(values):
+            lines.append(" | ".join(values).rstrip(" |"))
+    return "\n".join(lines)
+
+
+def _parse_academic_rows(raw: str, keys: tuple[str, ...]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        values = [part.strip() for part in line.split("|")]
+        values.extend([""] * (len(keys) - len(values)))
+        row = {key: values[index] for index, key in enumerate(keys)}
+        if any(row.values()):
+            rows.append(row)
+    return rows
 
 st.set_page_config(page_title="ApplyPilot", page_icon="📄", layout="wide")
 
@@ -78,6 +107,149 @@ with tabs[0]:
         )
         answers["start_date"] = st.text_input(
             "Start date / availability", answers.get("start_date", "")
+        )
+
+    with st.expander("Education and school qualifications", expanded=True):
+        education = profile.setdefault("education", {})
+        if not isinstance(education, dict):
+            education = {}
+            profile["education"] = education
+        e1, e2 = st.columns(2)
+        with e1:
+            institution = st.text_input(
+                "University / higher-education institution",
+                education.get("institution") or education.get("school", ""),
+                key="education_institution",
+            )
+            education["institution"] = institution
+            education["school"] = institution
+            education["country"] = st.text_input(
+                "University country",
+                education.get("country", ""),
+                key="education_country",
+            )
+            education["degree_type"] = st.text_input(
+                "Degree type (for example LLB, BA, BSc)",
+                education.get("degree_type", ""),
+                key="education_degree_type",
+            )
+            education["subject"] = st.text_input(
+                "Degree subject",
+                education.get("subject", ""),
+                key="education_subject",
+            )
+            education["degree"] = st.text_input(
+                "Full degree title",
+                education.get("degree", ""),
+                key="education_degree",
+            )
+        with e2:
+            education["start"] = st.text_input(
+                "University start month / year",
+                education.get("start", ""),
+                key="education_start",
+            )
+            education["end"] = st.text_input(
+                "Graduation or expected completion month / year",
+                education.get("end", ""),
+                key="education_end",
+            )
+            education["classification"] = st.text_input(
+                "Achieved or predicted degree classification",
+                education.get("classification", ""),
+                key="education_classification",
+            )
+            education["overall_mark"] = st.text_input(
+                "Overall mark / average",
+                education.get("overall_mark", ""),
+                key="education_overall_mark",
+            )
+            education["status"] = st.text_input(
+                "Degree result status",
+                education.get("status", ""),
+                placeholder="Achieved, predicted, pending, or not applicable",
+                key="education_status",
+            )
+
+        modules_raw = st.text_area(
+            "University modules and marks — one per line: Module | Mark | Year",
+            _format_academic_rows(
+                education.get("modules") or education.get("highlights"),
+                ("name", "mark", "year"),
+            ),
+            height=170,
+            key="education_modules",
+        )
+        education["modules"] = _parse_academic_rows(
+            modules_raw,
+            ("name", "mark", "year"),
+        )
+
+        st.markdown("#### School qualifications")
+        secondary = profile.setdefault("school_qualifications", {})
+        if not isinstance(secondary, dict):
+            secondary = {}
+            profile["school_qualifications"] = secondary
+        s1, s2 = st.columns(2)
+        with s1:
+            secondary["type"] = st.text_input(
+                "Qualification system",
+                secondary.get("type", ""),
+                placeholder="A levels, IB, HKDSE, GCSEs, or another qualification",
+                key="school_qualification_type",
+            )
+            secondary["school"] = st.text_input(
+                "School name",
+                secondary.get("school", ""),
+                key="school_name",
+            )
+            secondary["country"] = st.text_input(
+                "School / examination country",
+                secondary.get("country", ""),
+                key="school_country",
+            )
+            secondary["completion_year"] = st.text_input(
+                "Completion year",
+                secondary.get("completion_year", ""),
+                key="school_completion_year",
+            )
+        with s2:
+            secondary["grading_scale"] = st.text_input(
+                "Grading scale",
+                secondary.get("grading_scale", ""),
+                placeholder="For example A*–E, 1–7, or awarding body's scale",
+                key="school_grading_scale",
+            )
+            secondary["status"] = st.text_input(
+                "Results status",
+                secondary.get("status", ""),
+                placeholder="Achieved, predicted, or pending",
+                key="school_results_status",
+            )
+            secondary["resits"] = st.text_input(
+                "Resits / retakes",
+                secondary.get("resits", ""),
+                placeholder="No, or provide the exact confirmed details",
+                key="school_resits",
+            )
+
+        school_results_raw = st.text_area(
+            "School subjects and grades — one per line: Subject | Grade or mark | Year",
+            _format_academic_rows(
+                secondary.get("results"),
+                ("subject", "grade", "year"),
+            ),
+            height=170,
+            key="school_results",
+        )
+        secondary["results"] = _parse_academic_rows(
+            school_results_raw,
+            ("subject", "grade", "year"),
+        )
+        st.caption(
+            "Record the real qualification name and result. Do not convert overseas "
+            "grades into A levels, UCAS points, or another scale unless an official "
+            "application instruction provides the conversion."
         )
 
     profile["summary"] = st.text_area("Summary", profile.get("summary", ""), height=120)
@@ -336,6 +508,9 @@ with tabs[4]:
         direct_missing.append("Please provide the employer's exact name.")
     if not direct_role.strip():
         direct_missing.append("Please provide the programme or role title.")
+    if application_type in {"law", "graduate"}:
+        direct_missing.extend(missing_academic_details(profile))
+    direct_missing = list(dict.fromkeys(direct_missing))
 
     st.subheader("Questions to answer before automation")
     for question in direct_application_intake_questions(
