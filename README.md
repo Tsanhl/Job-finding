@@ -21,11 +21,13 @@ cp .env.example .env
 
 Copy `data/profile.example.json` to the ignored `data/profile.local.json`, fill in the candidate's facts, and set `cv_path` in `config.yaml` or `APPLYPILOT_CV_PATH` in `.env`. Personal profile data, CVs, browser sessions, and run output are excluded from Git.
 
-## Run the UI
+## Run the optional local UI
 
 ```bash
 streamlit run app.py
 ```
+
+Streamlit is only a local browser interface and is bound to `127.0.0.1` by the checked-in configuration; this project is not deployed as a public website. The CLI below can be used instead.
 
 The LinkedIn tab shows the pre-application checklist first. The Direct Apply tab asks a full law/graduate-scheme intake before it can open an external application. Browser automation is blocked until required profile, CV, work-authorisation, sponsorship, and target details are present. Unknown required fields, declarations, tests, CAPTCHA, consent, and login walls remain with the user.
 
