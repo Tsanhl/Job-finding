@@ -1,4 +1,5 @@
 .env
+config.yaml
 .browser_data/
 output/
 tmp/

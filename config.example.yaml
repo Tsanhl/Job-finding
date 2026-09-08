@@ -9,7 +9,7 @@ linkedin:
   headless: false
   keep_run_logs: 3
   keep_browser_open: true
-  # Stop after these searches if nothing left — no infinite loop
+  # Stop after these searches if nothing is left; do not loop indefinitely.
   searches:
     - keywords: "intern"
       location: "London, England, United Kingdom"
@@ -51,7 +51,7 @@ linkedin:
       location: "United States"
       max: 5
 defaults:
-  # Complete these in Profile & CV or data/profile.local.json before applying.
+  # Complete these locally before applying.
   location: ""
   keywords: ""
   work_authorization: ""

@@ -20,9 +20,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 cp .env.example .env
+cp config.example.yaml config.yaml
 ```
 
-Copy `data/profile.example.json` to the ignored `data/profile.local.json`, fill in the candidate's facts, and set `cv_path` in `config.yaml` or `APPLYPILOT_CV_PATH` in `.env`. Personal profile data, CVs, browser sessions, and run output are excluded from Git.
+Copy `data/profile.example.json` to the ignored `data/profile.local.json`, fill in the candidate's facts, and set `cv_path` in the ignored local `config.yaml` or `APPLYPILOT_CV_PATH` in `.env`. Personal profile data, configuration, CVs, browser sessions, and run output are excluded from Git.
 
 ## Run the optional local UI
 
