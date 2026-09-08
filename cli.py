@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+from dataclasses import replace
 from pathlib import Path
 
+from src.account_automation import PortalCredentialManager
 from src.answers import answer_many
 from src.application_flow import (
     direct_application_intake_questions,
@@ -21,6 +24,11 @@ from src.browser_session import get_context
 from src.config import ensure_dirs, load_config
 from src.cover_letter import generate_cover_letter, save_cover_letter
 from src.external_apply import fill_generic_application_form
+from src.full_automation import (
+    FullAutomationRequest,
+    load_full_automation_request,
+    run_full_automation,
+)
 from src.linkedin_apply import run_linkedin_auto_apply, slugify
 from src.profile import load_profile
 
@@ -75,9 +83,29 @@ def main() -> None:
         help="Prepare multiple direct applications with isolated local workers",
     )
     p_batch.add_argument("--applications-file", required=True)
-    p_batch.add_argument("--workers", type=int, default=2)
+    p_batch.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Concurrent worker limit (default: one per application, up to 10)",
+    )
     p_batch.add_argument("--confirm", action="store_true")
     p_batch.add_argument("--no-ai", action="store_true")
+
+    p_full = sub.add_parser(
+        "full-auto",
+        help="Search for suitable jobs and complete several applications concurrently",
+    )
+    p_full.add_argument("--requirements-file", default="")
+    p_full.add_argument("--workers", type=int, default=None)
+    p_full.add_argument(
+        "--submission-policy",
+        choices=("review", "auto-submit"),
+        default=None,
+    )
+    p_full.add_argument("--accept-required-terms", action="store_true")
+    p_full.add_argument("--confirm", action="store_true")
+    p_full.add_argument("--no-ai", action="store_true")
 
     args = parser.parse_args()
     cfg = load_config()
@@ -247,6 +275,108 @@ def main() -> None:
             default_cv_path=cfg["cv_path"],
             worker_count=args.workers,
             use_ai=not args.no_ai,
+        )
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+    elif args.cmd == "full-auto":
+        if args.requirements_file:
+            request = load_full_automation_request(args.requirements_file)
+        else:
+            keywords = tuple(
+                value.strip()
+                for value in input("Target roles or keywords (comma-separated): ").split(",")
+                if value.strip()
+            )
+            default_locations = profile.get("preferred_locations") or [profile.get("location", "")]
+            location_default = "; ".join(value for value in default_locations if value)
+            locations_value = input(
+                f"Target locations (semicolon-separated) [{location_default}]: "
+            ).strip() or location_default
+            locations = [value.strip() for value in locations_value.split(";") if value.strip()]
+            maximum_value = input("Number of applications [10]: ").strip() or "10"
+            paid_only = input("Paid employment only? [Y/n]: ").strip().lower() not in {
+                "n",
+                "no",
+            }
+            experience_limit = (
+                input("Maximum years of required experience [1]: ").strip() or "1"
+            )
+            excluded_employers = [
+                value.strip()
+                for value in input(
+                    "Employers already completed or to exclude (comma-separated) [none]: "
+                ).split(",")
+                if value.strip()
+            ]
+            policy_value = (
+                input("Submission policy (review or auto-submit) [review]: ").strip().lower()
+                or "review"
+            )
+            accept_terms = False
+            if policy_value == "auto-submit":
+                accept_terms = input(
+                    "Allow required employer terms/privacy checkboxes? [y/N]: "
+                ).strip().lower() in {"y", "yes"}
+            request = FullAutomationRequest.from_mapping(
+                {
+                    "keywords": list(keywords),
+                    "locations": locations,
+                    "max_applications": maximum_value,
+                    "paid_roles_only": paid_only,
+                    "max_required_experience_years": experience_limit,
+                    "excluded_employers": excluded_employers,
+                    "submission_policy": policy_value,
+                    "accept_required_terms": accept_terms,
+                }
+            )
+
+        if args.submission_policy:
+            request = replace(request, submission_policy=args.submission_policy)
+        if args.accept_required_terms:
+            request = replace(request, accept_required_terms=True)
+        print("Full-automation request:")
+        print(json.dumps(request.public_dict(), indent=2, ensure_ascii=False))
+        if not args.confirm:
+            print(
+                "Re-run with --confirm to provide the application email, choose the "
+                "employer-credential mode, and start the workers."
+            )
+            return
+
+        profile_email = str(profile.get("email") or "").strip()
+        email = input(f"Application email [{profile_email}]: ").strip() or profile_email
+        unique_credentials = input(
+            "Generate a unique password for each employer and save it to macOS Keychain? [Y/n]: "
+        ).strip().lower() not in {"n", "no"}
+        if unique_credentials:
+            credentials = PortalCredentialManager(
+                email=email,
+                generate_unique=True,
+                save_to_keychain=True,
+            )
+        else:
+            password = getpass.getpass(
+                "Shared employer-portal password (hidden; not saved): "
+            )
+            credentials = PortalCredentialManager(
+                email=email,
+                shared_password=password,
+                generate_unique=False,
+                save_to_keychain=False,
+            )
+        run_profile = dict(profile)
+        run_profile["email"] = email
+        summary = run_full_automation(
+            request,
+            credentials=credentials,
+            profile=run_profile,
+            defaults=defaults,
+            cv_path=cfg["cv_path"],
+            browser_data_dir=cfg["browser_data_dir"],
+            output_dir=cfg["output_dir"],
+            worker_count=args.workers,
+            use_ai=not args.no_ai,
+            log=print,
         )
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 

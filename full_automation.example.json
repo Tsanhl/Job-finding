@@ -1,0 +1,22 @@
+{
+  "keywords": [
+    "graduate analyst",
+    "legal graduate",
+    "technology graduate"
+  ],
+  "locations": [
+    "London, England, United Kingdom"
+  ],
+  "excluded_keywords": [
+    "senior",
+    "director",
+    "manager"
+  ],
+  "excluded_employers": [],
+  "paid_roles_only": true,
+  "max_required_experience_years": 1,
+  "max_applications": 10,
+  "submission_policy": "review",
+  "easy_apply_only": false,
+  "accept_required_terms": false
+}

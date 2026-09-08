@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 
 from src.answers import answer_many
+from src.assessment_ui import assessment_panel
 from src.application_flow import (
     application_intake_questions,
     direct_application_intake_questions,
@@ -85,6 +86,7 @@ tabs = st.tabs(
         "Direct Apply",
         "Batch Apply",
         "Run logs",
+        "Assessment Monitor + Solver",
     ]
 )
 
@@ -612,9 +614,9 @@ with tabs[5]:
     profile = load_profile()
     st.subheader("Multiple prepared applications")
     st.info(
-        "Each application runs in its own local worker and browser tab. A maximum "
-        "of four workers can run together. Every item must pass its own intake, and "
-        "all final submissions remain manual."
+        "Each application runs in its own local worker and browser tab. Up to ten "
+        "applications run together by default. Every item must pass its own intake, "
+        "and all final submissions remain manual."
     )
     batch_file = st.text_input(
         "Local application queue JSON",
@@ -624,10 +626,10 @@ with tabs[5]:
     batch_c1, batch_c2 = st.columns(2)
     with batch_c1:
         batch_workers = st.number_input(
-            "Concurrent workers",
+            "Concurrent worker limit",
             min_value=1,
-            max_value=4,
-            value=2,
+            max_value=10,
+            value=10,
             key="batch_workers",
         )
     with batch_c2:
@@ -700,3 +702,6 @@ with tabs[6]:
         choice = st.selectbox("Log file", [f.name for f in files])
         data = json.loads((out / choice).read_text(encoding="utf-8"))
         st.json(data)
+
+with tabs[7]:
+    assessment_panel()

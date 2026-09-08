@@ -118,6 +118,8 @@ def _generate_with_openai(
     prompt = f"""Write a professional UK-style cover letter (250-350 words).
 Tone: confident, concise, specific, no fluff or clichés.
 Do not invent experience. Use only the candidate profile.
+Formatting: use plain text with no bold body text, salutation, complimentary close,
+or applicant name. Use bold only if an employer-supplied template explicitly requires it.
 
 Role: {role}
 Company: {company}

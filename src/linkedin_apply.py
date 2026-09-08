@@ -14,6 +14,11 @@ from playwright.sync_api import Page
 from .answers import answer_question
 from .cover_letter import generate_cover_letter
 from .profile import load_profile
+from .submission_guard import (
+    ai_rewrite_required,
+    attestation_blockers,
+    verify_application_ready,
+)
 from .urlutil import normalize_job_url
 
 
@@ -687,8 +692,13 @@ def _fill_easy_apply_step(
         pass
 
 
-def _check_required_consent_boxes(page: Page, log: LogFn | None) -> None:
-    """Leave consent and policy checkboxes for the user to confirm."""
+def _check_required_consent_boxes(
+    page: Page,
+    log: LogFn | None,
+    *,
+    accept_required_terms: bool = False,
+) -> None:
+    """Handle required terms only when the user explicitly allowed that policy."""
     modal = _easy_apply_modal(page)
     if not modal.count():
         return
@@ -696,7 +706,20 @@ def _check_required_consent_boxes(page: Page, log: LogFn | None) -> None:
     for i in range(boxes.count()):
         try:
             box = boxes.nth(i)
-            if box.is_visible(timeout=300) and not box.is_checked():
+            if not box.is_visible(timeout=300) or box.is_checked():
+                continue
+            text = box.evaluate(
+                "n => (n.closest('label,div,fieldset')?.innerText || '').slice(0,500)"
+            ).lower()
+            can_accept = (
+                accept_required_terms
+                and any(term in text for term in ("terms", "privacy", "data processing", "acknowledge"))
+                and not any(term in text for term in ("marketing", "newsletter", "job alerts"))
+            )
+            if can_accept:
+                box.check(timeout=3000)
+                _log(f"Accepted required application terms checkbox #{i+1}", log)
+            else:
                 _log(f"Left consent/policy checkbox #{i+1} unchecked for user review", log)
         except Exception:
             continue
@@ -715,12 +738,16 @@ def complete_easy_apply(
     use_ai: bool,
     dry_run: bool,
     log: LogFn | None,
+    allow_submit: bool | None = None,
+    accept_required_terms: bool = False,
 ) -> ApplyResult:
     """
     Full Easy Apply wizard:
     fill → Next/Continue (repeat) → Review → Submit application.
     On unknown required fields: leave modal open and return needs_info (PING).
     """
+    submit_enabled = (not dry_run) if allow_submit is None else bool(allow_submit)
+    rewrite_required = ai_rewrite_required(job_context, use_ai=use_ai)
     local_defaults = {
         **defaults,
         "_company": company or "the company",
@@ -760,6 +787,16 @@ def complete_easy_apply(
             log=log,
         )
         page.wait_for_timeout(600)
+        try:
+            modal_text = modal.inner_text(timeout=1000) or ""
+        except Exception:
+            modal_text = ""
+        rewrite_required = rewrite_required or ai_rewrite_required(
+            f"{job_context}\n{modal_text}",
+            use_ai=use_ai,
+        )
+        declarations = attestation_blockers(modal_text)
+        can_submit = submit_enabled and not rewrite_required and not declarations
 
         if dry_run:
             _click_modal_button(page, ["Discard", "Cancel"])
@@ -768,19 +805,59 @@ def complete_easy_apply(
 
         # 1) Submit when available — only if every required field is resolved.
         if _visible_submit_candidate(page):
+            _check_required_consent_boxes(
+                page,
+                log,
+                accept_required_terms=accept_required_terms and can_submit,
+            )
             hints = _unanswered_required_hints(page)
             if hints:
                 detail = "NEED INFO (modal left open): " + "; ".join(hints[:4])
                 _log(f"*** PING: {detail} ***", log)
                 return ApplyResult(title, company, url, "needs_info", detail)
-        submitted = _click_modal_button(page, submit_labels)
+            verification = verify_application_ready(
+                page,
+                profile=profile,
+                cv_path=cv_path,
+                root_selector=".jobs-easy-apply-modal, [role='dialog'], body",
+            )
+            if verification.blockers:
+                detail = "NEED INFO (modal left open): " + "; ".join(
+                    verification.blockers[:4]
+                )
+                return ApplyResult(title, company, url, "needs_info", detail)
+            if rewrite_required:
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    "needs_review",
+                    "AI-assisted draft answers populated; employer AI guidance requires user rewrite; Submit locked",
+                )
+            if declarations:
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    "needs_review",
+                    "; ".join(declarations) + "; Submit left for user",
+                )
+            if not submit_enabled:
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    "needs_review",
+                    "Application filled to final review; Submit left for user",
+                )
+        submitted = _click_modal_button(page, submit_labels) if can_submit else None
         if not submitted:
             try:
                 sub = page.locator(
                     "button[data-live-test-easy-apply-submit-button], "
                     "button[aria-label='Submit application']"
                 ).first
-                if sub.count() and sub.is_visible(timeout=800):
+                if can_submit and sub.count() and sub.is_visible(timeout=800):
                     # Clear discard overlay if present (Cancel = keep app)
                     _dismiss_modals(page)
                     sub.click(timeout=5000, force=True)
@@ -808,7 +885,7 @@ def complete_easy_apply(
                     use_ai=use_ai,
                     log=log,
                 )
-                submitted2 = _click_modal_button(page, submit_labels)
+                submitted2 = _click_modal_button(page, submit_labels) if can_submit else None
                 if submitted2:
                     page.wait_for_timeout(1800)
                     if page.locator("text=Application sent").count() or _easy_apply_modal(page).count() == 0:
@@ -834,7 +911,7 @@ def complete_easy_apply(
                 log=log,
             )
             page.wait_for_timeout(600)
-            submitted = _click_modal_button(page, submit_labels)
+            submitted = _click_modal_button(page, submit_labels) if can_submit else None
             if submitted:
                 page.wait_for_timeout(1500)
                 if page.locator("text=Application sent").count() or _easy_apply_modal(page).count() == 0:
@@ -874,6 +951,10 @@ def apply_to_current_job(
     use_ai: bool,
     dry_run: bool,
     log: LogFn | None,
+    allow_submit: bool | None = None,
+    account_credentials: Any | None = None,
+    verification_client: Any | None = None,
+    accept_required_terms: bool = False,
 ) -> ApplyResult:
     title = (
         _safe_text(page, "h1")
@@ -943,6 +1024,8 @@ def apply_to_current_job(
             use_ai=use_ai,
             dry_run=dry_run,
             log=log,
+            allow_submit=allow_submit,
+            accept_required_terms=accept_required_terms,
         )
 
     # 2) External Apply (company website / ATS)
@@ -984,6 +1067,8 @@ def apply_to_current_job(
                 use_ai=use_ai,
                 dry_run=dry_run,
                 log=log,
+                allow_submit=allow_submit,
+                accept_required_terms=accept_required_terms,
             )
         if len(context.pages) > len(before_pages):
             external = context.pages[-1]
@@ -1008,9 +1093,25 @@ def apply_to_current_job(
     page.wait_for_timeout(1000)
 
     _log(f"External apply page: {external.url}", log)
-    if looks_like_signup_wall(external):
+    if looks_like_signup_wall(external) and account_credentials is None:
         _log(f"*** PING: SIGNUP/LOGIN REQUIRED *** {external.url}", log)
         return ApplyResult(title, company, url, "needs_signup", f"Signup wall: {external.url}")
+
+    resolved_credentials = account_credentials
+    if looks_like_signup_wall(external) and hasattr(account_credentials, "for_portal"):
+        try:
+            resolved_credentials = account_credentials.for_portal(
+                company or "the company",
+                external.url,
+            )
+        except Exception as exc:
+            return ApplyResult(
+                title,
+                company,
+                url,
+                "needs_signup",
+                f"Employer credential preparation failed ({type(exc).__name__})",
+            )
 
     detail = fill_generic_application_form(
         external,
@@ -1023,11 +1124,19 @@ def apply_to_current_job(
         use_ai=use_ai,
         dry_run=dry_run,
         log=log,
+        # Existing LinkedIn --submit behavior applies to Easy Apply only.
+        # External auto-submission requires the full-auto caller to opt in explicitly.
+        allow_submit=False if allow_submit is None else allow_submit,
+        account_credentials=resolved_credentials,
+        verification_client=verification_client,
+        accept_required_terms=accept_required_terms,
     )
     if "needs_signup" in detail:
         _log(f"*** PING: SIGNUP/LOGIN REQUIRED *** {external.url}", log)
         return ApplyResult(title, company, url, "needs_signup", detail)
-    if "submitted" in detail:
+    if "external_needs_info" in detail:
+        status = "needs_info"
+    elif "submitted" in detail:
         status = "applied"
     elif dry_run:
         status = "dry_run"
@@ -1101,6 +1210,10 @@ def run_linkedin_auto_apply(
     keep_context_open: bool = False,
     existing_page: Page | None = None,
     log: LogFn | None = None,
+    allow_submit: bool | None = None,
+    account_credentials: Any | None = None,
+    verification_client: Any | None = None,
+    accept_required_terms: bool = False,
 ) -> RunSummary:
     from .cleanup import cleanup_run_logs, merge_applied_from_summary, sanitize_summary_for_disk
     from .application_flow import missing_application_details
@@ -1200,6 +1313,10 @@ def run_linkedin_auto_apply(
                     use_ai=use_ai,
                     dry_run=dry_run,
                     log=log,
+                    allow_submit=allow_submit,
+                    account_credentials=account_credentials,
+                    verification_client=verification_client,
+                    accept_required_terms=accept_required_terms,
                 )
                 # Close only leftover LinkedIn tabs — never close company ATS signup tabs
                 for extra in list(page.context.pages)[1:]:

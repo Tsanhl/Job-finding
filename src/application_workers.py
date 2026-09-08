@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -13,8 +15,45 @@ from .application_flow import missing_academic_details, missing_application_deta
 from .browser_session import CDP_URL
 from .external_apply import fill_generic_application_form
 
-MAX_APPLICATION_WORKERS = 4
-MAX_APPLICATIONS_PER_BATCH = 20
+MAX_APPLICATION_WORKERS = 10
+MAX_APPLICATIONS_PER_BATCH = 10
+REVIEW_READY_STATUS = "ready_for_manual_review"
+
+
+def _portfolio_completion_fields(
+    rows: list[dict[str, Any]], *, running: bool
+) -> dict[str, Any]:
+    """Describe portfolio completion without treating partial work as finished."""
+    incomplete_ids = [
+        str(row["task_id"])
+        for row in rows
+        if row.get("status") != REVIEW_READY_STATUS
+    ]
+    if running:
+        portfolio_status = "running"
+    elif incomplete_ids:
+        portfolio_status = "incomplete"
+    else:
+        portfolio_status = REVIEW_READY_STATUS
+    return {
+        "portfolio_status": portfolio_status,
+        "completion_definition": "all_applications_ready_for_manual_review",
+        "review_ready_count": len(rows) - len(incomplete_ids),
+        "incomplete_application_ids": incomplete_ids,
+    }
+
+
+def resolve_worker_count(application_count: int, requested_workers: int | None) -> int:
+    """Choose one worker per application unless the caller sets a lower limit."""
+    if application_count < 1:
+        raise ValueError("Application queue is empty.")
+    if application_count > MAX_APPLICATIONS_PER_BATCH:
+        raise ValueError(
+            f"A batch can contain at most {MAX_APPLICATIONS_PER_BATCH} applications."
+        )
+    if requested_workers is None:
+        requested_workers = application_count
+    return max(1, min(int(requested_workers), MAX_APPLICATION_WORKERS, application_count))
 
 
 @dataclass(frozen=True)
@@ -75,6 +114,180 @@ class BatchValidationError(ValueError):
     def __init__(self, blockers: dict[str, list[str]]) -> None:
         super().__init__("Application batch has unresolved intake questions.")
         self.blockers = blockers
+
+
+class ApplicationBatchRun:
+    """Run a validated application queue in the background with live status.
+
+    At most ``worker_count`` tasks are submitted at once. This keeps the rest of
+    the queue cancellable instead of filling the executor with work that has not
+    begun. Running browser workers finish normally when cancellation is requested;
+    queued applications are never opened.
+    """
+
+    def __init__(
+        self,
+        tasks: list[ApplicationTask],
+        *,
+        profile: dict[str, Any],
+        defaults: dict[str, Any],
+        default_cv_path: str,
+        worker_count: int | None = None,
+        use_ai: bool = False,
+        worker_fn: Any | None = None,
+    ) -> None:
+        blockers = validate_application_batch(
+            tasks,
+            profile=profile,
+            default_cv_path=default_cv_path,
+        )
+        if blockers:
+            raise BatchValidationError(blockers)
+        if not tasks:
+            raise ValueError("Application queue is empty.")
+
+        self.tasks = tuple(tasks)
+        self.profile = deepcopy(profile)
+        self.defaults = deepcopy(defaults)
+        self.default_cv_path = default_cv_path
+        self.worker_count = resolve_worker_count(len(tasks), worker_count)
+        self.use_ai = bool(use_ai)
+        self._worker_fn = worker_fn
+        self._lock = threading.Lock()
+        self._cancel = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._running = False
+        self._statuses = {task.task_id: "queued" for task in self.tasks}
+        self._results: dict[str, ApplicationWorkerResult] = {}
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None:
+                raise RuntimeError("This application batch has already been started.")
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._coordinate,
+                daemon=True,
+                name="application-batch-coordinator",
+            )
+            self._thread.start()
+
+    def cancel(self) -> None:
+        """Prevent queued tasks from starting; do not interrupt active browser tabs."""
+        self._cancel.set()
+        with self._lock:
+            for task in self.tasks:
+                if self._statuses[task.task_id] == "queued":
+                    self._statuses[task.task_id] = "cancelled"
+                    self._results[task.task_id] = ApplicationWorkerResult(
+                        task_id=task.task_id,
+                        company=task.company,
+                        role=task.role,
+                        status="cancelled",
+                        detail="Not started because cancellation was requested.",
+                    )
+
+    def join(self, timeout: float | None = None) -> None:
+        thread = self._thread
+        if thread:
+            thread.join(timeout)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            rows: list[dict[str, Any]] = []
+            for task in self.tasks:
+                result = self._results.get(task.task_id)
+                if result:
+                    row = result.to_dict()
+                else:
+                    row = {
+                        "task_id": task.task_id,
+                        "company": task.company,
+                        "role": task.role,
+                        "status": self._statuses[task.task_id],
+                        "detail": "",
+                        "logs": [],
+                    }
+                rows.append(row)
+            counts: dict[str, int] = {}
+            for row in rows:
+                counts[row["status"]] = counts.get(row["status"], 0) + 1
+            summary = {
+                "worker_count": self.worker_count,
+                "application_count": len(self.tasks),
+                "final_submission": "manual_only",
+                "running": self._running,
+                "cancel_requested": self._cancel.is_set(),
+                "counts": counts,
+                "results": rows,
+            }
+            summary.update(_portfolio_completion_fields(rows, running=self._running))
+            return summary
+
+    def _coordinate(self) -> None:
+        pending_tasks = iter(self.tasks)
+        futures: dict[Future[ApplicationWorkerResult], ApplicationTask] = {}
+
+        def submit_one(pool: ThreadPoolExecutor) -> bool:
+            if self._cancel.is_set():
+                return False
+            try:
+                task = next(pending_tasks)
+            except StopIteration:
+                return False
+            with self._lock:
+                if self._statuses[task.task_id] != "queued":
+                    return False
+                self._statuses[task.task_id] = "running"
+            worker = self._worker_fn or _run_application_worker
+            future = pool.submit(
+                worker,
+                task,
+                profile=self.profile,
+                defaults=self.defaults,
+                default_cv_path=self.default_cv_path,
+                use_ai=self.use_ai and task.allow_ai,
+            )
+            futures[future] = task
+            return True
+
+        try:
+            with ThreadPoolExecutor(
+                max_workers=self.worker_count,
+                thread_name_prefix="application-worker",
+            ) as pool:
+                for _ in range(self.worker_count):
+                    if not submit_one(pool):
+                        break
+
+                while futures:
+                    done, _ = wait(
+                        tuple(futures), timeout=0.25, return_when=FIRST_COMPLETED
+                    )
+                    if not done:
+                        continue
+                    for future in done:
+                        task = futures.pop(future)
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            result = ApplicationWorkerResult(
+                                task_id=task.task_id,
+                                company=task.company,
+                                role=task.role,
+                                status="failed",
+                                detail=f"Worker failed: {type(exc).__name__}",
+                            )
+                        with self._lock:
+                            self._statuses[task.task_id] = result.status
+                            self._results[task.task_id] = result
+                        submit_one(pool)
+        finally:
+            if self._cancel.is_set():
+                self.cancel()
+            with self._lock:
+                self._running = False
+            self._worker_fn = None
 
 
 def load_application_tasks(path: str | Path) -> list[ApplicationTask]:
@@ -244,7 +457,7 @@ def run_application_batch(
     profile: dict[str, Any],
     defaults: dict[str, Any],
     default_cv_path: str,
-    worker_count: int = 2,
+    worker_count: int | None = None,
     use_ai: bool = False,
 ) -> dict[str, Any]:
     blockers = validate_application_batch(
@@ -255,7 +468,7 @@ def run_application_batch(
     if blockers:
         raise BatchValidationError(blockers)
 
-    workers = max(1, min(int(worker_count), MAX_APPLICATION_WORKERS, len(tasks)))
+    workers = resolve_worker_count(len(tasks), worker_count)
     indexed_results: dict[str, ApplicationWorkerResult] = {}
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="application-worker") as pool:
         futures = {
@@ -274,9 +487,13 @@ def run_application_batch(
             indexed_results[result.task_id] = result
 
     ordered_results = [indexed_results[task.task_id] for task in tasks]
-    return {
+    summary = {
         "worker_count": workers,
         "application_count": len(tasks),
         "final_submission": "manual_only",
         "results": [result.to_dict() for result in ordered_results],
     }
+    summary.update(
+        _portfolio_completion_fields(summary["results"], running=False)
+    )
+    return summary

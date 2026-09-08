@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from playwright.sync_api import Page
 
 from .answers import answer_question
+from .ats_adapters import AtsAdapter, detect_ats
 from .cover_letter import generate_cover_letter
+from .submission_guard import (
+    ai_rewrite_required,
+    attestation_blockers,
+    verify_application_ready,
+)
+from .work_experience import fill_repeatable_work_experience
+
+if TYPE_CHECKING:
+    from .account_automation import GmailBrowserVerifier, PortalCredentials
 
 LogFn = Callable[[str], None]
 
@@ -79,11 +89,22 @@ def wait_for_manual_login(
     return False
 
 
-def _click_progress(page: Page, *, allow_submit: bool = False) -> str | None:
-    """Click safe progress controls; final external submission is user-only."""
+def _click_progress(
+    page: Page,
+    *,
+    allow_submit: bool = False,
+    adapter: AtsAdapter | None = None,
+) -> str | None:
+    """Click progress controls and only explicit final-submit controls."""
+    progress_labels = adapter.progress_labels if adapter else (
+        "Next",
+        "Continue",
+        "Save and continue",
+        "Review",
+    )
     labels = [
         ("submit", ["Submit application", "Submit Application", "Submit your application", "Send application"]),
-        ("next", ["Next", "Continue", "Save and continue", "Review"]),
+        ("next", list(progress_labels)),
         ("apply", ["Apply", "Apply Now", "Apply now"]),
     ]
     for kind, texts in labels:
@@ -109,17 +130,6 @@ def _click_progress(page: Page, *, allow_submit: bool = False) -> str | None:
                     return f"{kind}:{t}"
                 except Exception:
                     continue
-    if not allow_submit:
-        return None
-    # Generic submit (only when explicitly enabled by a caller).
-    for sel in ("button[type='submit']", "input[type='submit']"):
-        loc = page.locator(sel).first
-        try:
-            if loc.count() and loc.is_visible(timeout=500):
-                loc.click(timeout=4000)
-                return "submit:generic"
-        except Exception:
-            continue
     return None
 
 
@@ -135,12 +145,43 @@ def fill_generic_application_form(
     use_ai: bool,
     dry_run: bool,
     log: LogFn | None,
+    allow_submit: bool = False,
+    account_credentials: PortalCredentials | None = None,
+    verification_client: GmailBrowserVerifier | None = None,
+    accept_required_terms: bool = False,
 ) -> str:
     """Best-effort fill for Greenhouse / Lever / Workday / Breezy / generic ATS (multi-step)."""
     page.wait_for_timeout(1200)
+    adapter = detect_ats(page.url, _page_body_text(page))
+    _log(f"Detected ATS adapter: {adapter.name}", log)
 
-    if looks_like_signup_wall(page) and not wait_for_manual_login(page, log=log):
+    def ensure_access() -> str | None:
+        if not looks_like_signup_wall(page):
+            return None
+        if account_credentials is not None:
+            from .account_automation import ensure_portal_access
+
+            try:
+                access = ensure_portal_access(
+                    page,
+                    credentials=account_credentials,
+                    company=company,
+                    verifier=verification_client,
+                    accept_required_terms=accept_required_terms,
+                    log=log,
+                )
+            except Exception as exc:
+                return f"needs_signup: account automation failed ({type(exc).__name__})"
+            if access.status == "ready":
+                return None
+            return f"needs_signup: {access.detail}"
+        if wait_for_manual_login(page, log=log):
+            return None
         return "needs_signup: login/register wall detected — user must sign in"
+
+    access_error = ensure_access()
+    if access_error:
+        return access_error
 
     # Wait briefly if still on LinkedIn redirect interstitial
     if "linkedin.com" in (page.url or "").lower():
@@ -189,15 +230,49 @@ def fill_generic_application_form(
         return None
 
     actions: list[str] = []
+    experience_blockers: list[str] = []
+    rewrite_required = ai_rewrite_required(
+        f"{job_context}\n{_page_body_text(page)}",
+        use_ai=use_ai,
+    )
     for step in range(8):
-        if looks_like_signup_wall(page) and not wait_for_manual_login(page, log=log):
-            return "needs_signup: login/register wall detected — user must sign in"
+        access_error = ensure_access()
+        if access_error:
+            return access_error
+
+        if adapter.name == "smartrecruiters":
+            experience_report = fill_repeatable_work_experience(
+                page,
+                profile=profile,
+                log=log,
+            )
+            if experience_report.attempted:
+                experience_blockers = list(experience_report.blockers)
+                if experience_report.skipped:
+                    _log(
+                        "Work experience already present: "
+                        + ", ".join(experience_report.skipped),
+                        log,
+                    )
 
         # File uploads
-        files = page.locator("input[type='file']")
+        files = page.locator(adapter.file_selector)
         for i in range(min(files.count(), 4)):
             try:
-                files.nth(i).set_input_files(cv_path)
+                file_input = files.nth(i)
+                meta = file_input.evaluate(
+                    """n => [
+                      n.name || '', n.id || '', n.getAttribute('aria-label') || '',
+                      n.closest('label,div,fieldset')?.innerText || ''
+                    ].join(' ').slice(0,500).toLowerCase()"""
+                )
+                if any(term in meta for term in ("cover letter", "transcript", "writing sample")):
+                    continue
+                if files.count() > 1 and i > 0 and not any(
+                    term in meta for term in ("resume", "résumé", "curriculum vitae", " cv")
+                ):
+                    continue
+                file_input.set_input_files(cv_path)
                 _log(f"Uploaded CV on external form (input #{i+1})", log)
             except Exception as exc:
                 _log(f"CV upload skip #{i+1}: {exc}", log)
@@ -216,10 +291,7 @@ def fill_generic_application_form(
             (("city", "location"), profile.get("location", "")),
         ]
 
-        inputs = page.locator(
-            "input[type='text'], input[type='email'], input[type='tel'], "
-            "input:not([type]), textarea"
-        )
+        inputs = page.locator(adapter.input_selector)
         for i in range(min(inputs.count(), 60)):
             el = inputs.nth(i)
             try:
@@ -298,7 +370,7 @@ def fill_generic_application_form(
                 continue
 
         # Selects
-        selects = page.locator("select")
+        selects = page.locator(adapter.select_selector)
         for i in range(selects.count()):
             sel = selects.nth(i)
             try:
@@ -348,20 +420,63 @@ def fill_generic_application_form(
         if dry_run:
             return "external_dry_run: filled form, did not submit"
 
-        submit_button = page.locator(
-            "button:has-text('Submit application'), button:has-text('Submit Application'), "
-            "button:has-text('Submit your application'), button:has-text('Send application'), "
-            "input[type='submit'][value*='submit' i], input[type='submit'][value*='send' i]"
-        ).first
+        page_text = _page_body_text(page)
+        rewrite_required = rewrite_required or ai_rewrite_required(
+            f"{job_context}\n{page_text}",
+            use_ai=use_ai,
+        )
+        verification = verify_application_ready(
+            page,
+            profile=profile,
+            cv_path=cv_path,
+            root_selector=adapter.root_selector,
+        )
+        readiness_blockers = list(verification.blockers)
+        readiness_blockers.extend(experience_blockers)
+        readiness_blockers = list(dict.fromkeys(readiness_blockers))
+        submit_button = page.locator(adapter.submit_selector).first
         try:
             if submit_button.count() and submit_button.is_visible(timeout=500):
-                return "external_ready_for_manual_submit: form filled; final Submit left for user"
+                if readiness_blockers:
+                    return "external_needs_info: " + "; ".join(readiness_blockers[:6])
+                if rewrite_required:
+                    return (
+                        "external_ready_for_user_rewrite: AI-assisted draft answers were "
+                        "populated; employer AI guidance requires the candidate to rewrite "
+                        "them; Submit is locked"
+                    )
+                declarations = attestation_blockers(page_text)
+                if declarations:
+                    return "external_ready_for_manual_submit: " + "; ".join(declarations)
+                if not allow_submit:
+                    return "external_ready_for_manual_submit: form filled; final Submit left for user"
+                submit_button.click(timeout=5000)
+                page.wait_for_timeout(1800)
+                body = _page_body_text(page)
+                if _submission_confirmed(body):
+                    return "external_submitted: explicit final Submit completed"
+                return "external_submit_attempted_needs_review: confirmation was not detected"
         except Exception:
             pass
 
-        clicked = _click_progress(page, allow_submit=False)
+        if readiness_blockers:
+            return "external_needs_info: " + "; ".join(readiness_blockers[:6])
+        declarations = attestation_blockers(page_text)
+        effective_submit = allow_submit and not rewrite_required and not declarations
+        clicked = _click_progress(
+            page,
+            allow_submit=effective_submit,
+            adapter=adapter,
+        )
         if not clicked:
             if step == 0:
+                if rewrite_required:
+                    return (
+                        "external_ready_for_user_rewrite: AI-assisted draft answers were "
+                        "populated; Submit is locked"
+                    )
+                if declarations:
+                    return "external_ready_for_manual_submit: " + "; ".join(declarations)
                 return "external_ready_for_manual_submit: form filled; final Submit left for user"
             break
         actions.append(clicked)
@@ -369,25 +484,34 @@ def fill_generic_application_form(
         page.wait_for_timeout(1500)
 
         # Success heuristics
-        body = ""
-        try:
-            body = (page.locator("body").inner_text(timeout=1500) or "").lower()[:2000]
-        except Exception:
-            pass
-        if any(
-            x in body
-            for x in (
-                "thank you for applying",
-                "application submitted",
-                "application has been submitted",
-                "successfully applied",
-                "we have received your application",
-            )
-        ):
+        body = _page_body_text(page)
+        if _submission_confirmed(body):
             return "external_submitted: " + ",".join(actions)
 
     if any(a.startswith("submit") for a in actions):
         return "external_ready_for_manual_submit: form filled; final Submit left for user"
+    if rewrite_required:
+        return "external_ready_for_user_rewrite: AI-assisted draft answers were populated; Submit is locked"
     if actions:
         return "external_filled_needs_manual_submit: " + ",".join(actions)
     return "external_filled_needs_manual_submit"
+
+
+def _page_body_text(page: Page) -> str:
+    try:
+        return (page.locator("body").inner_text(timeout=1500) or "").lower()[:4000]
+    except Exception:
+        return ""
+
+
+def _submission_confirmed(body: str) -> bool:
+    return any(
+        phrase in body
+        for phrase in (
+            "thank you for applying",
+            "application submitted",
+            "application has been submitted",
+            "successfully applied",
+            "we have received your application",
+        )
+    )

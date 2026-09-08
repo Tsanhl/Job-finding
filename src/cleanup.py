@@ -86,8 +86,13 @@ def append_needs_review_queue(output_dir: str | Path, results: list[dict[str, An
             existing = []
     by_url = {normalize_job_url(x.get("url", "")): x for x in existing if x.get("url")}
     for r in results:
-        if r.get("status") in {"needs_review", "needs_signup", "error"} and r.get("url"):
-            by_url[normalize_job_url(r["url"])] = {
+        if not r.get("url"):
+            continue
+        normalized = normalize_job_url(r["url"])
+        if r.get("status") in {"applied", "skipped", "dry_run"}:
+            by_url.pop(normalized, None)
+        elif r.get("status") in {"needs_review", "needs_info", "needs_signup", "error"}:
+            by_url[normalized] = {
                 "url": normalize_job_url(r["url"]),
                 "title": r.get("title", ""),
                 "detail": r.get("detail", ""),
