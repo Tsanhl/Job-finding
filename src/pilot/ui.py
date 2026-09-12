@@ -97,7 +97,17 @@ def render():
         )
         st.button("Refresh")
         return
-    setup = call("setup_status")
+    try:
+        setup = call("setup_status")
+    except (ValueError, RuntimeError):
+        st.warning(
+            "The running ApplyPilot runtime was started from an older code version. "
+            "Restart the foreground runtime, then refresh this page. Saved local "
+            "profiles, documents and application checkpoints are preserved."
+        )
+        st.code(".venv-upgrade/bin/python cli.py runtime start")
+        st.button("Refresh after restart")
+        return
     if not setup["ready"]:
         st.warning(
             "Application setup is incomplete: " + "; ".join(setup["missing"])
