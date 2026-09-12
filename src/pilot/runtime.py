@@ -30,9 +30,18 @@ from .submission import SubmitService
 
 
 class Runtime:
-    def __init__(self, store, browser, *, testing=False):
+    def __init__(self, store, browser, *, testing=False, browser_factory=None):
         self.store = store
         self.browser = browser
+        self.browser_factory = browser_factory
+        self.browser_lock = asyncio.Lock()
+        self.background = {}
+        from .workspace import Workspace
+
+        self.workspace = Workspace(store)
+        from .tracking import MailTracking
+
+        self.tracking = MailTracking(store, self.workspace)
         self.testing = testing
         self.owner = uid()
         self.documents = Documents(store)
@@ -62,7 +71,55 @@ class Runtime:
 
         self.resources = Resources()
 
+    async def ensure_browser(self):
+        async with self.browser_lock:
+            if self.browser is None or not self.browser.is_connected():
+                if self.browser_factory is None:
+                    raise ValueError(
+                        "Start the managed browser, then retry this application action"
+                    )
+                try:
+                    self.browser = await self.browser_factory()
+                except Exception:
+                    raise ValueError(
+                        "Managed browser unavailable. Start it from the launcher, then retry."
+                    ) from None
+        return self.browser
+
+    def background_job(self, kind, operation):
+        if len(self.background) >= 3:
+            raise ValueError(
+                "Three background operations are active; wait for one to finish"
+            )
+        job = uid()
+        self.store.db.execute(
+            "INSERT INTO workspace_jobs(id,kind,state,created,updated) VALUES(?,?,'RUNNING',?,?)",
+            (job, kind, time.time(), time.time()),
+        )
+
+        async def run():
+            try:
+                result = await operation()
+                state = "DONE"
+            except asyncio.CancelledError:
+                state = "CANCELLED"
+                result = {"detail": "Cancelled; saved records are retained"}
+            except Exception:
+                state = "FAILED"
+                result = {
+                    "detail": "Operation could not finish. Check source availability, connection or configuration and retry."
+                }
+            self.store.db.execute(
+                "UPDATE workspace_jobs SET state=?,result=?,updated=? WHERE id=?",
+                (state, encode(result), time.time(), job),
+            )
+            self.background.pop(job, None)
+
+        self.background[job] = asyncio.create_task(run())
+        return {"job_id": job, "state": "RUNNING"}
+
     async def inventory(self):
+        await self.ensure_browser()
         result = []
         for ctx in self.browser.contexts:
             context_id = self.contexts.setdefault(ctx, uid())
@@ -82,6 +139,7 @@ class Runtime:
         return result
 
     async def page(self, app, target, guard):
+        await self.ensure_browser()
         if app in self.pages and not self.pages[app].is_closed():
             return self.pages[app]
         if target.tab_id:
@@ -421,10 +479,7 @@ class Runtime:
                             app, run, self.owner, fence, fields, documents
                         ),
                     )
-                    if (
-                        result.state == State.REVIEW_READY
-                        and plan.will_submit(target)
-                    ):
+                    if result.state == State.REVIEW_READY and plan.will_submit(target):
                         async with self.submit_lock:
                             result = await self.submitter.submit(
                                 page, plan, target, app, run, result, guard
@@ -494,6 +549,111 @@ class Runtime:
 
     async def command(self, request):
         op = request.get("op")
+        if op == "capabilities":
+            return {
+                "protocol": 2,
+                "workspace": True,
+                "browser_optional": True,
+                "gmail_interval_seconds": 86400,
+            }
+        if op == "workspace_revision":
+            return {
+                "history": self.store.one(
+                    "SELECT MAX(id) AS revision FROM history_events"
+                )["revision"],
+                "applications": self.store.one(
+                    "SELECT MAX(updated) AS revision FROM applications"
+                )["revision"],
+                "mail": self.store.one(
+                    "SELECT MAX(last_success) AS revision FROM mail_tracking"
+                )["revision"],
+            }
+        if op == "workspace_find":
+
+            async def find():
+                from .local_discovery import find as local_find
+
+                return await local_find(self, request)
+
+            return self.background_job("discovery", find)
+        if op == "workspace_sources":
+            from .local_discovery import source_list
+
+            return source_list(self.workspace)
+        if op == "workspace_source_save":
+            from .local_discovery import save_source
+
+            return save_source(self.workspace, request["source"])
+        if op == "workspace_job":
+            row = self.store.one(
+                "SELECT * FROM workspace_jobs WHERE id=?", (request["id"],)
+            )
+            if not row:
+                raise ValueError("Unknown background operation")
+            return {**row, "result": json.loads(row["result"])}
+        if op == "workspace_cancel_job":
+            task = self.background.get(request["id"])
+            if task:
+                task.cancel()
+            return {"cancel_requested": bool(task)}
+        if op == "workspace_catalog":
+            from .question_catalog import load
+
+            return load()
+        if op == "workspace_import_preview":
+            from .jobsignal_import import preview
+
+            result = preview(request["path"], request.get("owner"))
+            result.pop("payload", None)
+            return result
+        if op == "workspace_import_jobsignal":
+            from .jobsignal_import import apply
+
+            return apply(self, request)
+        if op == "workspace_mail_status":
+            return self.tracking.status()
+        if op == "workspace_mail_configure":
+            return self.tracking.configure(request)
+        if op == "workspace_mail_sync":
+            return self.background_job(
+                "gmail", lambda: self.tracking.sync(request["connection_id"])
+            )
+        if op == "workspace_mail_messages":
+            return self.tracking.messages()
+        if op == "workspace_mail_resolve":
+            return self.tracking.resolve(request["id"], request["application_id"])
+        if op == "workspace_codex":
+            from .codex_bridge import discover
+
+            async def codex_find():
+                result = await discover(request, self.store.path.parent)
+                # The model only discovers public candidate URLs. Re-fetch every source.
+                from .discovery import Discovery
+
+                verified = await Discovery(self.store, testing=self.testing).find(
+                    {
+                        **request,
+                        "sources": result["urls"][:10],
+                        "include_builtin": False,
+                    }
+                )
+                self.workspace.ingest(verified["jobs"])
+                return verified
+
+            if request.get("disclosure_confirmed") is not True:
+                raise PermissionError(
+                    "Approve sending these search criteria to Codex first"
+                )
+            return self.background_job("codex-discovery", codex_find)
+        if isinstance(op, str) and op.startswith("workspace_"):
+            result = self.workspace.command(request)
+            if isinstance(result, dict) and result.get("state") in {
+                str(s) for s in DONE
+            }:
+                task = self.active.get(result.get("application_id"))
+                if task:
+                    task.cancel()
+            return result
         if op == "status":
             return {
                 **self.store.snapshot(),
@@ -518,8 +678,11 @@ class Runtime:
         if op == "tabs":
             return await self.inventory()
         if op == "open_job_links":
+            await self.ensure_browser()
             urls = request.get("urls")
-            requested = request.get("requested", len(urls) if isinstance(urls, list) else 0)
+            requested = request.get(
+                "requested", len(urls) if isinstance(urls, list) else 0
+            )
             if not isinstance(urls, list) or not urls:
                 raise ValueError("Select job links")
             if type(requested) is not int or not 1 <= requested <= 10:
@@ -600,19 +763,19 @@ class Runtime:
                 request.get("url"), request.get("name", "")
             )
         if op == "linkedin_easy_apply":
+            await self.ensure_browser()
             return await self.linkedin.begin(request)
         if op == "linkedin_status":
             return self.linkedin.status(request["batch_id"])
         if op == "linkedin_resume":
+            await self.ensure_browser()
             return await self.linkedin.resume(request["batch_id"])
         if op == "discover":
             from .discovery import Discovery
 
             return await Discovery(
                 self.store, testing=self.testing, browser=self.browser
-            ).discover(
-                RunPlan.parse(request["plan"])
-            )
+            ).discover(RunPlan.parse(request["plan"]))
         if op == "profiles":
             return self.store.rows(
                 "SELECT id,profile_id,provenance,created FROM profile_versions ORDER BY created DESC"
@@ -999,7 +1162,7 @@ class Runtime:
         if op == "doctor":
             return {
                 **self.store.doctor(),
-                "browser_connected": self.browser.is_connected(),
+                "browser_connected": bool(self.browser and self.browser.is_connected()),
                 "mail_required_for_fill": False,
             }
         if op == "cache_clear":
@@ -1032,8 +1195,18 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
     store = Store(home / "applypilot.sqlite3")
     store.recover()
     async with async_playwright() as p:
-        browser = await p.chromium.connect_over_cdp(cdp)
-        runtime = Runtime(store, browser)
+        runtime = Runtime(
+            store,
+            None,
+            browser_factory=lambda: p.chromium.connect_over_cdp(cdp, timeout=10000),
+        )
+        store.db.execute(
+            "UPDATE workspace_jobs SET state='FAILED',result=?,updated=? WHERE state='RUNNING'",
+            (
+                encode({"detail": "Runtime restarted; retry the bounded operation"}),
+                time.time(),
+            ),
+        )
 
         async def handle(reader, writer):
             try:
@@ -1057,6 +1230,7 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
         server = await asyncio.start_unix_server(handle, str(socket), limit=1024 * 1024)
         os.chmod(socket, 0o600)
         pump = asyncio.create_task(runtime.pump())
+        tracking = asyncio.create_task(runtime.tracking.run())
         print(
             "ApplyPilot foreground runtime ready. Ctrl-C stops scheduling; browser owner remains open.",
             flush=True,
@@ -1067,9 +1241,18 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
         finally:
             runtime.closed = True
             pump.cancel()
+            tracking.cancel()
             for worker in list(runtime.active.values()):
                 worker.cancel()
-            await asyncio.gather(pump, *runtime.active.values(), return_exceptions=True)
+            for task in list(runtime.background.values()):
+                task.cancel()
+            await asyncio.gather(
+                pump,
+                tracking,
+                *runtime.active.values(),
+                *runtime.background.values(),
+                return_exceptions=True,
+            )
             store.close()
             socket.unlink(missing_ok=True)
             lock.close()

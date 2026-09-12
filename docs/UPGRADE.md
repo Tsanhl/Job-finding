@@ -1,34 +1,22 @@
 # ApplyPilot local upgrade
 
-This release moves application execution into one foreground runtime. The Streamlit UI and CLI are clients of the same Unix socket. The original source backup is under `output/upgrade-backup-20260912-111357/`. No live records have been imported and no employer or mailbox acceptance was performed during development.
+This release moves application execution into one foreground runtime. The local dashboard and CLI are clients of the same Unix socket. The original source backup is under `output/upgrade-backup-20260912-111357/`. No live records have been imported and no employer or mailbox acceptance was performed during development.
 
 ## Start
 
-The upgrade environment is `.venv-upgrade`, isolated from `.venv` and system packages. On this Mac:
+The unified local launcher replaces Streamlit as the normal interface:
 
 ```bash
-.venv-upgrade/bin/python scripts/open_browser.py
+.venv-upgrade/bin/python -m src.pilot.desktop
 ```
 
-Leave that managed browser owner running. In another terminal:
+It starts the singleton runtime when needed and opens an authenticated loopback dashboard. See [the local workspace guide](LOCAL_WORKSPACE.md) for the complete merged interface, daily Gmail tracking, Codex integration and migration controls. Browser startup is optional until opening or filling employer pages. Keep using `.venv-upgrade`; the original environment remains preserved.
 
-```bash
-.venv-upgrade/bin/python cli.py runtime start
-```
-
-Then launch the UI:
-
-```bash
-.venv-upgrade/bin/python -m streamlit run app.py
-```
-
-For a fresh installation, create a separate Python 3.14 environment and install `requirements-runtime.txt`, then `python -m playwright install chromium`. The lock targets macOS arm64; do not replace an existing environment blindly.
-
-The runtime defaults to `~/Library/Application Support/ApplyPilot`. It does not install a daemon, schedule jobs, discover unrelated tabs, use your personal Chrome profile or close the browser owner. `--home` selects an explicitly separate local runtime/database. Do not use network/cloud-synchronised storage for this database.
+For application tabs, separately start `.venv-upgrade/bin/python scripts/open_browser.py`. Do not stop an active runtime during uncertain submission. Streamlit remains available only as a compatibility interface.
 
 ## Profile and documents
 
-On first launch, use **Profile & documents → Reusable profile setup**. Confirm
+On first launch, use **My Information**. Confirm
 contact details, education or an explicit none, work history or an explicit none,
 country-specific work rights, sponsorship needs and the screening items marked
 required for setup. The categorized blank catalogue also offers optional reusable

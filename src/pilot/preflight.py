@@ -26,8 +26,8 @@ def check(plan, store, documents):
     }:
         setup = setup_status(store, documents, plan.profile_version)
         if not setup["ready"]:
-            report.global_blockers.append(
-                "Complete reusable profile setup: " + "; ".join(setup["missing"])
+            report.warnings.append(
+                "Profile gaps will be asked only where needed: " + "; ".join(setup["missing"])
             )
     profile_row = store.one(
         "SELECT profile_id FROM profile_versions WHERE id=?", (plan.profile_version,)

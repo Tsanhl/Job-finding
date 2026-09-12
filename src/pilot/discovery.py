@@ -361,8 +361,9 @@ def _normalize(entry, source):
             or entry.get("deadline")
         )
         or "Unknown",
-        "opening": _text(entry.get("datePosted") or entry.get("openingDate"))
+        "opening": _text(entry.get("openingDate"))
         or "Unknown",
+        "posted": _text(entry.get("datePosted")) or "Unknown",
         "requirements": _requirements(entry)[:4000] or "Not stated in source",
         "location": _location(entry)[:500] or "Unknown",
         "employment_type": _text(

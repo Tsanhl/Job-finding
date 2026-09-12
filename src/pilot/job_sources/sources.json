@@ -1,0 +1,44 @@
+[
+  {
+    "id": "newton-graduate",
+    "name": "Newton graduate programme announcement",
+    "employer": "Newton",
+    "kind": "newton",
+    "url": "https://newtonimpact.com/careers/early-careers-hub/graduate-consultant/",
+    "allowed_hosts": [
+      "newtonimpact.com"
+    ],
+    "link_hosts": [
+      "newtonimpact.com"
+    ],
+    "enabled": true,
+    "country": "GB",
+    "poll_seconds": 900,
+    "fresh_seconds": 2700,
+    "min_request_interval": 2,
+    "reviewed_by": "JobSignal source review 2026-09-12",
+    "terms_checked": true,
+    "notes": "Public programme facts and links only. Programme overview, not coverage of every vacancy. Unknown years remain unknown. Review reuse/coverage before public rollout."
+  },
+  {
+    "id": "pwc-graduate",
+    "name": "PwC graduate programme announcement",
+    "employer": "PwC",
+    "kind": "pwc",
+    "url": "https://www.pwc.co.uk/careers/early-careers/applying/frequently-asked-questions.html",
+    "allowed_hosts": [
+      "www.pwc.co.uk"
+    ],
+    "link_hosts": [
+      "www.pwc.co.uk"
+    ],
+    "enabled": true,
+    "country": "GB",
+    "poll_seconds": 900,
+    "fresh_seconds": 2700,
+    "min_request_interval": 2,
+    "reviewed_by": "JobSignal source review 2026-09-12",
+    "terms_checked": true,
+    "notes": "Public programme facts and links only. Programme overview, not coverage of every vacancy. Unknown years remain unknown. Review reuse/coverage before public rollout."
+  }
+]

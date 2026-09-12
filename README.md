@@ -1,7 +1,14 @@
 # ApplyPilot
 
-The current local dashboard exposes Applications, Autofill, Find jobs, LinkedIn
-Easy Apply, Open job links, Profile & documents, and Settings. Autofill completes
+The current local dashboard combines JobSignal's design and discovery adapters
+with ApplyPilot's private profile, autofill and application history. It exposes
+Discover jobs, Search portfolios, My Information, Saved opportunities, Autofill,
+Applied History, Discovery status and Settings. Gmail tracking is opt-in, once
+every 24 hours with Sync now. Open it with `Open ApplyPilot.command` or
+`.venv-upgrade/bin/python -m src.pilot.desktop`.
+
+Read the [local workspace guide](docs/LOCAL_WORKSPACE.md) for setup, Codex tools,
+daily Gmail synchronization and data recovery. Autofill completes
 supported non-final sections and stops at final review by default. Each target
 can separately receive explicit submission authority. Internal capability and
 qualification checks remain enforced by one foreground local runtime. Start with the [upgrade

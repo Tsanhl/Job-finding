@@ -30,3 +30,16 @@ venv/
 
 .venv-upgrade/
 .runtime-test/
+
+# Local workspace records, archives and connection state never belong in Git.
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.bundle
+*.tar.gz
+dashboard-url.txt
+.env.backup
+.env.migration
+.env.production
