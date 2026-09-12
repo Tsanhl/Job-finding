@@ -56,6 +56,14 @@ country-scoped work rights, reusable screening answers and an approved CV.
 Salary, consent, declarations and later conditional questions remain
 application-specific.
 
+The versioned public question catalogue stores blank definitions, categories,
+matching phrases, answer shapes, reuse scope and ask timing. Only entries marked
+`setup_required` participate in readiness. Optional reusable answers stay
+unknown until confirmed. Country-specific, employer-specific, salary,
+declaration, signature and sensitive voluntary-disclosure answers are never
+supplied from the public catalogue. When more than one definition matches, the
+most specific set of phrases wins so similar-looking questions are not merged.
+
 The durable state constraints protect completed and uncertain submission states. A new profile version reconciles only affected applications and downgrades their existing submission approval to review. Model requests have a separate two-request semaphore, 30-second timeout and 60-request runtime budget. Form operations use 15-second control limits and a bounded 180-second execution slice; navigation and unchanged-page detection produce explicit incomplete results.
 
 The repository-owned pre-push hook runs `scripts/privacy_gate.py`. It scans

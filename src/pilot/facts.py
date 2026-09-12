@@ -15,11 +15,14 @@ ALIASES = {
 
 
 def resolve(field, profile, target):
-    from .question_catalog import answer
+    from .question_catalog import answer, match
 
+    definition = match(field.question)
     preset = answer(profile, field.question, employer=getattr(target, "employer", ""))
     if preset:
         return preset
+    if definition and definition.get("reuse") == "application_specific":
+        return ""
     if field.kind in {FieldKind.ELIGIBILITY, FieldKind.SPONSORSHIP}:
         country = ALIASES.get(target.country.casefold(), target.country.upper())
         rights = profile.get("work_rights", {}).get(country, {}) if country else {}

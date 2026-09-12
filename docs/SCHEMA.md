@@ -4,6 +4,19 @@ Generated from the four numbered migrations against a disposable SQLite database
 
 Profile versions and events are immutable. Terminal application states cannot revert. Uncertain submissions retain a unique reservation. Foreign keys are enabled on every connection. Cache tables are disposable; all other tables are authoritative or evidence.
 
+## Public question catalogue
+
+`data/preset_questions.json` is a versioned, tracked schema containing blank
+question definitions. Every entry has a unique `id`, `category`, exact
+`match_terms`, user-facing `prompt`, `answer_type`, `profile_path`, `reuse`,
+`ask_policy` and Boolean `setup_required`. Reusable choice definitions also list
+their allowed `choices`. `review_reason` explains why exact wording or user review
+is needed. The loader rejects duplicate IDs, unknown policies, invalid types,
+application-specific profile paths and any tracked `answer` or `default_answer`.
+
+Candidate values are stored only inside immutable local `profile_versions` or
+application-scoped `answer_versions`. They are not part of this public schema.
+
 ## Tables
 
 ### account_locks

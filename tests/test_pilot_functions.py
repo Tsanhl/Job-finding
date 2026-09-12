@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright
 from src.pilot.discovery import Discovery, format_job
 from src.pilot.drafting import redact
 from src.pilot.models import FinalAction, FunctionKind, RunPlan
-from src.pilot.onboarding import setup_status
+from src.pilot.onboarding import profile_gaps, setup_status
 from src.pilot.question_catalog import load as load_questions
 from src.pilot.resources import Documents
 from src.pilot.runtime import Runtime
@@ -121,6 +121,15 @@ def test_first_run_readiness_requires_profile_and_approved_cv(tmp_path):
         assert setup_status(store, Documents(store), version)["ready"]
     finally:
         store.close()
+
+
+def test_optional_catalogue_answers_do_not_block_first_launch():
+    profile = complete_profile()
+    profile["answers"].pop("willing_to_relocate")
+    assert "reusable screening questions" not in profile_gaps(profile)
+
+    profile["answers"].pop("has_driving_licence")
+    assert "reusable screening questions" in profile_gaps(profile)
 
 
 def test_external_drafting_redacts_direct_identifiers():

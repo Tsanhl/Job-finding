@@ -1,108 +1,985 @@
 {
-  "version": 1,
+  "version": 2,
   "policy": "Question definitions are public repository data. Candidate answers belong only in ignored local profile versions.",
+  "rules": {
+    "setup_required": "Only definitions marked setup_required are needed before an application-changing function starts.",
+    "optional_profile": "Optional reusable answers may be confirmed in advance but never block first launch.",
+    "when_encountered": "Ask only after an application presents the exact question and independent work is complete.",
+    "required_only": "Ask only when the portal requires an answer; salary is never assumed.",
+    "application_specific": "Do not reuse an answer across applications, even when wording looks similar."
+  },
   "questions": [
     {
       "id": "previously_worked_for_employer",
-      "match_terms": ["previously worked for this organisation"],
+      "category": "Employer relationship",
+      "match_terms": [
+        "previously worked for this organisation"
+      ],
       "prompt": "Have you previously worked for this employer?",
       "answer_type": "yes_no",
       "profile_path": "answers.previously_worked_for_employer_default",
       "reuse": "default_with_employer_override",
-      "review_reason": "The local default is No unless the candidate records a Yes override for the named employer."
+      "ask_policy": "first_setup",
+      "setup_required": true,
+      "review_reason": "A local default may be used only when there is no answer recorded for the named employer."
+    },
+    {
+      "id": "previously_applied_to_employer",
+      "category": "Employer relationship",
+      "match_terms": [
+        "previously applied",
+        "this organisation"
+      ],
+      "prompt": "Have you previously applied to this employer?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "The answer depends on the named employer, programme and application cycle."
+    },
+    {
+      "id": "current_or_former_worker_for_employer",
+      "category": "Employer relationship",
+      "match_terms": [
+        "currently or previously",
+        "employee contractor or agency worker"
+      ],
+      "prompt": "Are you currently, or have you previously been, an employee, contractor or agency worker for this employer?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Worker categories and group-company scope differ by employer."
+    },
+    {
+      "id": "relative_or_close_relationship_at_employer",
+      "category": "Employer relationship",
+      "match_terms": [
+        "relative or close personal relationship",
+        "works for"
+      ],
+      "prompt": "Do you have a relative or close personal relationship with anyone working for this employer?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "The answer is specific to the employer and the relationship definition shown."
+    },
+    {
+      "id": "employee_referral",
+      "category": "Employer relationship",
+      "match_terms": [
+        "referred by",
+        "employee"
+      ],
+      "prompt": "Were you referred by an employee of this employer?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Referral details belong only to the named application."
+    },
+    {
+      "id": "application_source",
+      "category": "Employer relationship",
+      "match_terms": [
+        "how did you hear about us"
+      ],
+      "prompt": "How did you hear about this opportunity?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Use the actual source for this vacancy and the portal's exact choices."
+    },
+    {
+      "id": "conflict_of_interest_with_employer",
+      "category": "Employer relationship",
+      "match_terms": [
+        "conflict of interest",
+        "employment"
+      ],
+      "prompt": "Do you have a conflict of interest relevant to this employment?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Apply the employer's stated definition to the circumstances at the time of application."
+    },
+    {
+      "id": "right_to_work_named_country",
+      "category": "Work rights and eligibility",
+      "match_terms": [
+        "legal right to work",
+        "country of employment"
+      ],
+      "prompt": "Do you have the legal right to work in the country of employment?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "country_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Resolve from confirmed country-specific permission, start date and portal wording."
+    },
+    {
+      "id": "requires_current_or_future_sponsorship",
+      "category": "Work rights and eligibility",
+      "match_terms": [
+        "now or in the future",
+        "sponsorship"
+      ],
+      "prompt": "Will you now or in the future require immigration sponsorship for this role?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "country_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Resolve from country, permission type, expiry, programme length and the employer's wording."
     },
     {
       "id": "work_rights_entire_programme_without_visa_or_sponsorship",
-      "match_terms": ["legal right to work", "duration of the programme", "without requiring a visa or sponsorship"],
+      "category": "Work rights and eligibility",
+      "match_terms": [
+        "legal right to work",
+        "duration of the programme",
+        "without requiring a visa or sponsorship"
+      ],
       "prompt": "Do you have the legal right to work for the full programme and later substantive role without requiring a visa or sponsorship?",
       "answer_type": "yes_no",
       "profile_path": "",
       "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
       "review_reason": "The answer depends on country, start date, programme duration, immigration permission and employer wording."
     },
     {
+      "id": "minimum_age_by_start",
+      "category": "Work rights and eligibility",
+      "match_terms": [
+        "at least 18",
+        "start date"
+      ],
+      "prompt": "Will you meet the stated minimum age by the start date?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "The threshold and relevant date must come from the exact vacancy question."
+    },
+    {
       "id": "valid_identity_document_by_start",
-      "match_terms": ["valid and in date passport or national identity card", "commence your employment"],
+      "category": "Work rights and eligibility",
+      "match_terms": [
+        "valid and in date passport or national identity card",
+        "commence your employment"
+      ],
       "prompt": "Will you hold a valid passport or national identity card by the employment start date?",
       "answer_type": "yes_no",
       "profile_path": "answers.valid_identity_document_by_start",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
+    },
+    {
+      "id": "full_time_availability",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "available to work full time"
+      ],
+      "prompt": "Are you available to work full time?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.available_full_time",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "willing_to_relocate",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "willing to relocate"
+      ],
+      "prompt": "Are you willing to relocate for a role?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.willing_to_relocate",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "willing_to_travel",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "willing to travel",
+        "role"
+      ],
+      "prompt": "Are you willing to travel when a role requires it?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.willing_to_travel",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "hybrid_or_office_attendance",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "attend the office",
+        "days per week"
+      ],
+      "prompt": "Can you meet a role's stated office or hybrid attendance requirement?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.can_meet_office_attendance",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "Confirm the exact location and number of required days before reuse."
+    },
+    {
+      "id": "shift_evening_or_weekend_work",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "evenings or weekends",
+        "work"
+      ],
+      "prompt": "Are you willing to work the stated shifts, evenings or weekends?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.willing_shift_evening_weekend",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "The exact schedule still needs to match the vacancy."
+    },
+    {
+      "id": "notice_period",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "notice period"
+      ],
+      "prompt": "What is your current notice period?",
+      "answer_type": "text",
+      "profile_path": "answers.notice_period",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "earliest_start_date",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "earliest date",
+        "start"
+      ],
+      "prompt": "What is your earliest available start date?",
+      "answer_type": "date_or_text",
+      "profile_path": "answers.earliest_start_date",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "driving_licence",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "valid driving licence"
+      ],
+      "prompt": "Do you hold a valid driving licence?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.has_driving_licence",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
+    },
+    {
+      "id": "access_to_vehicle",
+      "category": "Availability and mobility",
+      "match_terms": [
+        "access to",
+        "own vehicle"
+      ],
+      "prompt": "Do you have access to a vehicle when a role requires one?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.has_access_to_vehicle",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "degree_completed_or_expected",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "completed or expect to complete",
+        "degree"
+      ],
+      "prompt": "Have you completed, or do you expect to complete, a degree?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.degree_completed_or_expected",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "graduation_date",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "graduation date"
+      ],
+      "prompt": "What is your actual or expected graduation date?",
+      "answer_type": "date_or_text",
+      "profile_path": "answers.graduation_date",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "degree_classification",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "degree classification"
+      ],
+      "prompt": "What degree classification have you achieved or do you expect?",
+      "answer_type": "text",
+      "profile_path": "answers.degree_classification",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "minimum_academic_requirement",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "minimum academic requirements"
+      ],
+      "prompt": "Do you meet the vacancy's stated minimum academic requirements?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Validate the named qualification, subject, grade, institution and date against confirmed education records."
+    },
+    {
+      "id": "professional_qualification_required",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "professional qualification",
+        "required"
+      ],
+      "prompt": "Do you hold the professional qualification required for this vacancy?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Match the exact qualification and current status requested by the vacancy."
+    },
+    {
+      "id": "language_proficiency",
+      "category": "Education and qualifications",
+      "match_terms": [
+        "language proficiency"
+      ],
+      "prompt": "Which languages can you use professionally, and at what proficiency?",
+      "answer_type": "text",
+      "profile_path": "answers.language_proficiency",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
     },
     {
       "id": "ever_dismissed",
-      "match_terms": ["ever been dismissed", "previous employer"],
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "ever been dismissed",
+        "previous employer"
+      ],
       "prompt": "Have you ever been dismissed by an employer?",
       "answer_type": "yes_no",
       "profile_path": "answers.ever_dismissed",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
     },
     {
       "id": "formal_disciplinary_investigation",
-      "match_terms": ["formal disciplinary investigation"],
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "formal disciplinary investigation"
+      ],
       "prompt": "Have you been, or are you currently, the subject of a formal disciplinary investigation?",
       "answer_type": "yes_no",
       "profile_path": "answers.formal_disciplinary_investigation",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
+    },
+    {
+      "id": "restrictive_covenant_or_non_compete",
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "restrictive covenant",
+        "non-compete"
+      ],
+      "prompt": "Are you subject to a restrictive covenant or non-compete that may affect this role?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.restrictive_covenant_or_non_compete",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "criminal_conviction_declaration",
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "criminal convictions",
+        "declare"
+      ],
+      "prompt": "Do you have any criminal conviction or matter that must be declared under this question?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Jurisdiction, spent-conviction rules, role exemptions and wording differ; never infer or reuse this declaration."
+    },
+    {
+      "id": "regulatory_investigation_or_sanction",
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "regulatory investigation",
+        "sanction"
+      ],
+      "prompt": "Are you subject to any regulatory investigation or sanction covered by this question?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Use the regulator, jurisdiction, time period and scope stated by the employer."
+    },
+    {
+      "id": "debarred_or_disqualified",
+      "category": "Integrity and regulatory screening",
+      "match_terms": [
+        "debarred or disqualified",
+        "employment"
+      ],
+      "prompt": "Have you been debarred or disqualified from work or a regulated activity covered by this question?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "The scope depends on the named jurisdiction, regulator and activity."
     },
     {
       "id": "non_discharged_bankruptcy_iva_trust_deed",
-      "match_terms": ["non-discharged bankruptcy", "individual voluntary arrangement"],
+      "category": "Financial integrity",
+      "match_terms": [
+        "non-discharged bankruptcy",
+        "individual voluntary arrangement"
+      ],
       "prompt": "Do you have a non-discharged bankruptcy, IVA, or Scottish trust deed?",
       "answer_type": "yes_no",
       "profile_path": "answers.non_discharged_bankruptcy_iva_trust_deed",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
     },
     {
       "id": "ccj_or_defaults_over_10000",
-      "match_terms": ["county court judgements", "defaults totalling over £10k"],
+      "category": "Financial integrity",
+      "match_terms": [
+        "county court judgements",
+        "defaults totalling over £10k"
+      ],
       "prompt": "Do you have CCJs or defaults totalling over £10,000?",
       "answer_type": "yes_no",
       "profile_path": "answers.ccj_or_defaults_over_10000",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
     },
     {
       "id": "four_or_more_judgment_debts",
-      "match_terms": ["four or more county court judgements or judgment debts"],
+      "category": "Financial integrity",
+      "match_terms": [
+        "four or more county court judgements or judgment debts"
+      ],
       "prompt": "Do you have four or more CCJs or judgment debts?",
       "answer_type": "yes_no",
       "profile_path": "answers.four_or_more_judgment_debts",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
     },
     {
       "id": "continuing_external_business_interests",
-      "match_terms": ["external/outside business interests", "continue after you start working"],
+      "category": "Conflicts and outside interests",
+      "match_terms": [
+        "external/outside business interests",
+        "continue after you start working"
+      ],
       "prompt": "Will any outside business interest or other role continue after you start this employment?",
       "answer_type": "yes_no",
       "profile_path": "answers.continuing_external_business_interests",
-      "reuse": "reusable_until_changed"
+      "reuse": "reusable_until_changed",
+      "ask_policy": "first_setup",
+      "setup_required": true
+    },
+    {
+      "id": "company_director_or_officer",
+      "category": "Conflicts and outside interests",
+      "match_terms": [
+        "director or officer",
+        "company"
+      ],
+      "prompt": "Are you a director or officer of a company or other organisation?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.company_director_or_officer",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "politically_exposed_person",
+      "category": "Conflicts and outside interests",
+      "match_terms": [
+        "politically exposed person"
+      ],
+      "prompt": "Are you, or a person connected to you, within the definition of a politically exposed person shown here?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Use the portal's definition, covered relationships, jurisdiction and time period."
+    },
+    {
+      "id": "references_available",
+      "category": "Checks and references",
+      "match_terms": [
+        "provide references",
+        "employment"
+      ],
+      "prompt": "Can you provide the references requested for employment?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.references_available",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "Reference contact details are requested only when the application requires them."
+    },
+    {
+      "id": "contact_current_employer_for_reference",
+      "category": "Checks and references",
+      "match_terms": [
+        "contact your current employer",
+        "reference"
+      ],
+      "prompt": "May this employer contact your current employer for a reference at the stated stage?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "This permission is employer-specific and may depend on the recruitment stage."
     },
     {
       "id": "pre_employment_vetting_consent",
-      "match_terms": ["pre-employment vetting checks", "happy to continue"],
+      "category": "Checks and references",
+      "match_terms": [
+        "pre-employment vetting checks",
+        "happy to continue"
+      ],
       "prompt": "Do you agree to continue with the employer's stated pre-employment vetting checks?",
       "answer_type": "yes_no",
       "profile_path": "",
       "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
       "review_reason": "This is consent to the named employer's notice and must be confirmed for that application."
     },
     {
+      "id": "background_or_security_check_consent",
+      "category": "Checks and references",
+      "match_terms": [
+        "background or security checks",
+        "consent"
+      ],
+      "prompt": "Do you consent to the background or security checks described for this role?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Confirm only after the named checks and privacy notice are shown."
+    },
+    {
+      "id": "current_security_clearance",
+      "category": "Checks and references",
+      "match_terms": [
+        "current security clearance"
+      ],
+      "prompt": "What current security clearance do you hold, if any?",
+      "answer_type": "text",
+      "profile_path": "answers.current_security_clearance",
+      "reuse": "reusable_until_changed",
+      "ask_policy": "optional_profile",
+      "setup_required": false
+    },
+    {
+      "id": "salary_expectation",
+      "category": "Compensation",
+      "match_terms": [
+        "salary expectation"
+      ],
+      "prompt": "What salary do you expect for this role?",
+      "answer_type": "text",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "required_only",
+      "setup_required": false,
+      "review_reason": "Ask only when the portal requires an answer. Never infer a figure from profile history or another role."
+    },
+    {
+      "id": "current_compensation",
+      "category": "Compensation",
+      "match_terms": [
+        "current compensation"
+      ],
+      "prompt": "What current compensation information does this application require?",
+      "answer_type": "text",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "required_only",
+      "setup_required": false,
+      "review_reason": "Ask only if required and preserve the currency, period and components in the exact wording."
+    },
+    {
+      "id": "reasonable_adjustments",
+      "category": "Adjustments and accessibility",
+      "match_terms": [
+        "reasonable adjustments",
+        "recruitment process"
+      ],
+      "prompt": "Do you want to request a reasonable adjustment for this recruitment process?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Needs and processes can differ by assessment and application; never infer an answer."
+    },
+    {
+      "id": "disability_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "disability",
+        "prefer not to say"
+      ],
+      "prompt": "How do you want to answer this voluntary disability disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Use the portal's exact definition and choices; never infer from other information."
+    },
+    {
+      "id": "gender_identity_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "gender identity",
+        "prefer not to say"
+      ],
+      "prompt": "How do you want to answer this voluntary gender identity disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Use the portal's exact choices; never infer from title, name or documents."
+    },
+    {
+      "id": "ethnicity_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "ethnic group",
+        "prefer not to say"
+      ],
+      "prompt": "How do you want to answer this voluntary ethnicity disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Categories vary by jurisdiction and employer; never infer from nationality, name or documents."
+    },
+    {
+      "id": "sexual_orientation_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "sexual orientation",
+        "prefer not to say"
+      ],
+      "prompt": "How do you want to answer this voluntary sexual orientation disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "This is sensitive voluntary information and is never inferred or reused automatically."
+    },
+    {
+      "id": "religion_or_belief_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "religion or belief",
+        "prefer not to say"
+      ],
+      "prompt": "How do you want to answer this voluntary religion or belief disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "This is sensitive voluntary information and is never inferred or reused automatically."
+    },
+    {
+      "id": "veteran_status_disclosure",
+      "category": "Voluntary demographic disclosure",
+      "match_terms": [
+        "veteran status",
+        "prefer not to answer"
+      ],
+      "prompt": "How do you want to answer this voluntary veteran status disclosure?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Definitions differ by jurisdiction; use only the portal's exact choices."
+    },
+    {
       "id": "household_earner_occupation_at_14",
-      "match_terms": ["occupation of your main household earner", "aged about 14"],
+      "category": "Social mobility",
+      "match_terms": [
+        "occupation of your main household earner",
+        "aged about 14"
+      ],
       "prompt": "What was the occupation category of your main household earner when you were about 14?",
-      "answer_type": "household_occupation",
+      "answer_type": "choice",
       "profile_path": "answers.household_earner_occupation_at_14",
       "reuse": "reusable_after_confirmation",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
       "choices": [
-        "Modern professional and traditional professional occupations such as teacher, nurse, physiotherapist, social worker, musician, police officer (sergeant or above), software designer, accountant, solicitor, medical practitioner, scientist, civil engineer or mechanical engineer",
-        "Senior, middle or junior managers or administrators such as finance manager, chief executive, large business owner, office manager, retail manager, bank manager, restaurant manager, warehouse manager",
-        "Clerical and intermediate occupations such as secretary, personal assistant, call centre agent, clerical worker, nursery nurse",
-        "Technical and craft occupations such as motor mechanic, plumber, printer, electrician, gardener, train driver",
-        "Routine, semi-routine manual and service occupations such as postal worker, machine operative, security guard, caretaker, farm worker, catering assistant, sales assistant, HGV driver, cleaner, porter, packer, labourer, waiter or waitress, bar staff",
-        "Long-term unemployed (claimed Jobseeker’s Allowance or earlier unemployment benefit for more than a year)",
-        "Small business owners who employed fewer than 20 people such as corner shop owners, small plumbing companies, retail shop owner, single restaurant or cafe owner, taxi owner, garage owner",
-        "Other such as retired, this question does not apply to me, I don’t know",
+        "Modern professional and traditional professional occupations",
+        "Senior, middle or junior managers or administrators",
+        "Clerical and intermediate occupations",
+        "Technical and craft occupations",
+        "Routine, semi-routine manual and service occupations",
+        "Long-term unemployed",
+        "Small business owners who employed fewer than 20 people",
+        "Other, not applicable or unknown",
         "Do not wish to disclose"
       ]
+    },
+    {
+      "id": "first_generation_university",
+      "category": "Social mobility",
+      "match_terms": [
+        "first generation",
+        "university"
+      ],
+      "prompt": "Are you the first generation in your family to attend university?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.first_generation_university",
+      "reuse": "reusable_after_confirmation",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "Confirm the definition used by the application before reuse."
+    },
+    {
+      "id": "parent_or_guardian_degree",
+      "category": "Social mobility",
+      "match_terms": [
+        "parent or guardian",
+        "university degree"
+      ],
+      "prompt": "Did either parent or guardian complete a university degree?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.parent_or_guardian_degree",
+      "reuse": "reusable_after_confirmation",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "Confirm the relationship and qualification definition shown by the application."
+    },
+    {
+      "id": "free_school_meals",
+      "category": "Social mobility",
+      "match_terms": [
+        "eligible for free school meals"
+      ],
+      "prompt": "Were you eligible for free school meals during the period stated?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.free_school_meals",
+      "reuse": "reusable_after_confirmation",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "review_reason": "The school years and jurisdiction in the exact question must match."
+    },
+    {
+      "id": "secondary_school_type",
+      "category": "Social mobility",
+      "match_terms": [
+        "type of school",
+        "between the ages of 11 and 16"
+      ],
+      "prompt": "What type of school did you mainly attend between ages 11 and 16?",
+      "answer_type": "choice",
+      "profile_path": "answers.secondary_school_type",
+      "reuse": "reusable_after_confirmation",
+      "ask_policy": "optional_profile",
+      "setup_required": false,
+      "choices": [
+        "State-run or state-funded school",
+        "Independent or fee-paying school",
+        "Independent or fee-paying school with a bursary",
+        "School outside the country of application",
+        "Home schooled",
+        "Other, not applicable or unknown",
+        "Do not wish to disclose"
+      ]
+    },
+    {
+      "id": "care_experience_disclosure",
+      "category": "Social mobility",
+      "match_terms": [
+        "care experienced",
+        "local authority care"
+      ],
+      "prompt": "How do you want to answer this voluntary care-experience question?",
+      "answer_type": "choice",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Definitions and periods differ, and this sensitive answer is never inferred."
+    },
+    {
+      "id": "privacy_notice_acknowledgement",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "privacy notice",
+        "acknowledge"
+      ],
+      "prompt": "Do you acknowledge the privacy notice shown for this application?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "The user must be shown the named notice before acknowledging it."
+    },
+    {
+      "id": "application_accuracy_declaration",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "information provided",
+        "true and accurate"
+      ],
+      "prompt": "Do you declare that the information in this application is true and accurate?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "This declaration applies to the completed application and requires final user review."
+    },
+    {
+      "id": "electronic_signature",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "electronic signature",
+        "application"
+      ],
+      "prompt": "Enter the electronic signature requested for this application.",
+      "answer_type": "signature",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "A signature is never filled as an ordinary name field and requires explicit user action."
+    },
+    {
+      "id": "terms_and_conditions_acceptance",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "terms and conditions",
+        "agree"
+      ],
+      "prompt": "Do you agree to the terms and conditions shown for this application?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Terms must be reviewed for the specific application before acceptance."
+    },
+    {
+      "id": "marketing_communications_consent",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "marketing communications",
+        "consent"
+      ],
+      "prompt": "Do you want to receive optional marketing communications?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Optional marketing consent is never inferred from application consent."
+    },
+    {
+      "id": "talent_pool_consent",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "talent pool",
+        "future opportunities"
+      ],
+      "prompt": "Do you consent to being considered for future opportunities or a talent pool?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "This optional use of application data needs a separate employer-specific choice."
+    },
+    {
+      "id": "recorded_or_ai_assessment_consent",
+      "category": "Declarations and consent",
+      "match_terms": [
+        "recorded",
+        "assessment",
+        "consent"
+      ],
+      "prompt": "Do you consent to the recorded or automated assessment process described here?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "ask_policy": "when_encountered",
+      "setup_required": false,
+      "review_reason": "Present the provider, recording, automated-processing and retention terms before asking."
     }
   ]
 }

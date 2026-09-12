@@ -706,11 +706,13 @@ def render():
         if profiles:
             from .question_catalog import load as load_question_catalog
 
-            st.subheader("Reusable screening questions")
+            catalogue = load_question_catalog()
+            st.subheader("Screening question catalogue")
             st.caption(
-                "These answers create a private local profile version. Git contains "
-                "only the blank question catalogue. Employer consent and dated "
-                "work-rights wording are always asked on the application."
+                f"The catalogue contains {len(catalogue['questions'])} blank "
+                "definitions. Confirmed reusable answers create a private local "
+                "profile version. Git never contains candidate answers. Questions "
+                "marked per application are asked only when encountered."
             )
             preset_version = st.selectbox(
                 "Profile version to update",
@@ -720,24 +722,50 @@ def render():
             preset_profile = call("profile", version=preset_version)
             with st.form("preset-screening-questions"):
                 preset_answers = {}
-                for item in load_question_catalog()["questions"]:
+                category = ""
+                for item in catalogue["questions"]:
+                    if item["category"] != category:
+                        category = item["category"]
+                        st.markdown(f"**{category}**")
                     path = item.get("profile_path")
                     if not path:
-                        st.caption(item["prompt"] + " — asked per application")
+                        timing = (
+                            "asked only when required"
+                            if item.get("ask_policy") == "required_only"
+                            else "asked per application when encountered"
+                        )
+                        st.caption(item["prompt"] + " — " + timing)
                         continue
-                    options = (
-                        ["", "Yes", "No"]
-                        if item["answer_type"] == "yes_no"
-                        else [""] + item.get("choices", [])
-                    )
                     current = _profile_value(preset_profile, path)
-                    index = options.index(current) if current in options else 0
-                    preset_answers[path] = st.selectbox(
-                        item["prompt"],
-                        options,
-                        index=index,
-                        key="preset-" + item["id"],
+                    if current is True:
+                        current = "Yes"
+                    elif current is False:
+                        current = "No"
+                    label = item["prompt"] + (
+                        " (required for autofill setup)"
+                        if item.get("setup_required")
+                        else " (optional reusable answer)"
                     )
+                    choices = item.get("choices")
+                    if item["answer_type"] == "yes_no" or choices:
+                        options = (
+                            ["", "Yes", "No"]
+                            if item["answer_type"] == "yes_no"
+                            else [""] + choices
+                        )
+                        index = options.index(current) if current in options else 0
+                        preset_answers[path] = st.selectbox(
+                            label,
+                            options,
+                            index=index,
+                            key="preset-" + item["id"],
+                        )
+                    else:
+                        preset_answers[path] = st.text_input(
+                            label,
+                            value=str(current or ""),
+                            key="preset-" + item["id"],
+                        )
                     if item.get("review_reason"):
                         st.caption(item["review_reason"])
                 preset_confirmed = st.checkbox(

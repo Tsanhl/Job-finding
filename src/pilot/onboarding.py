@@ -76,7 +76,7 @@ def profile_gaps(profile):
     reusable = [
         item["profile_path"]
         for item in load_questions()["questions"]
-        if item.get("profile_path")
+        if item.get("setup_required") and item.get("profile_path")
     ]
     if any(not _present(_value(profile, path)) for path in reusable):
         missing.append("reusable screening questions")

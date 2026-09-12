@@ -38,6 +38,7 @@ def main():
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            check=False,
         )
         (out / "pytest.log").write_text(result.stdout)
         print(result.stdout)
@@ -133,7 +134,7 @@ def main():
             "",
             "Tests use disposable SQLite databases, synthetic profiles, loopback HTTP fixtures or intercepted browser requests. OAuth uses simulated provider responses and an in-memory secret backend. No native Keychain, real mailbox, employer registration or live submission was exercised.",
             "",
-            "The original baseline was 86 passed plus 6 subtests. Added coverage includes the four function requests, first-run readiness, target-scoped final actions, four-source discovery persistence, bounded listing-to-detail crawling, area filtering, CHECK PORTAL formatting, exact link counts, external-draft redaction and a multi-step LinkedIn review-ready flow that never submits. No tests were deselected.",
+            "The original baseline was 86 passed plus 6 subtests. Added coverage includes the four function requests, first-run readiness, the versioned blank question catalogue, required-versus-optional setup, application-specific salary and work-rights handling, target-scoped final actions, four-source discovery persistence, bounded listing-to-detail crawling, area filtering, CHECK PORTAL formatting, exact link counts, external-draft redaction and a multi-step LinkedIn review-ready flow that never submits. No tests were deselected.",
             "",
             "Detailed local logs: `output/upgrade-validation/pytest.log`; JUnit XML: `output/upgrade-validation/results.xml`.",
         ]

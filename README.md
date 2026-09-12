@@ -38,10 +38,15 @@ The current dashboard provides first-run reusable profile setup. Existing users
 can instead preview and import ignored local records. Personal profile data,
 configuration, CVs, browser sessions, and run output are excluded from Git.
 
-The tracked `data/preset_questions.json` catalogue contains reusable question
-definitions and review rules only. It must never contain candidate answers.
-Reusable answers belong in ignored local profile versions; dated work-rights and
-employer consent questions remain application-specific.
+The tracked `data/preset_questions.json` catalogue contains more than 60 blank,
+categorized definitions for employer relationships, work rights, availability,
+education, integrity, financial screening, conflicts, references, compensation,
+adjustments, voluntary disclosures, social mobility and declarations. Each
+definition states whether it is required during setup, optionally reusable, tied
+to a country or employer, or asked only when encountered. It must never contain
+candidate answers. Reusable answers belong in ignored local profile versions;
+salary, dated work-rights wording, declarations, signatures and employer consent
+remain application-specific.
 
 ## Run the optional local UI
 

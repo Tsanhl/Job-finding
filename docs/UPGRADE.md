@@ -30,7 +30,12 @@ The runtime defaults to `~/Library/Application Support/ApplyPilot`. It does not 
 
 On first launch, use **Profile & documents → Reusable profile setup**. Confirm
 contact details, education or an explicit none, work history or an explicit none,
-country-specific work rights, sponsorship needs and the reusable screening list.
+country-specific work rights, sponsorship needs and the screening items marked
+required for setup. The categorized blank catalogue also offers optional reusable
+answers for availability, mobility, qualifications, references and social
+mobility. Leaving optional answers unknown does not block Autofill. Salary,
+declarations, signatures, employer-specific relationships, sensitive voluntary
+disclosures and exact conditional wording are requested only when encountered.
 Register an approved CV. Autofill and LinkedIn Easy Apply remain unavailable
 until this setup is complete; Find Jobs and Open Job Links remain available.
 

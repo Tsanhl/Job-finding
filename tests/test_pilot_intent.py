@@ -80,6 +80,49 @@ def test_saved_no_licence_and_salary_only_when_required():
     assert resolve(field("Salary expectation"), profile, target) == ""
 
 
+def test_application_specific_catalogue_questions_override_generic_profile_rules():
+    profile = {
+        "answers": {
+            "disability": "A generic answer must not be reused",
+            "how_did_you_hear": "A different vacancy source",
+            "salary_range": "A different role's range",
+        }
+    }
+    target = Target("https://example.test/form", "Example", "Role", "identity")
+
+    def field(question):
+        return model(
+            {
+                "field_id": "field",
+                "question": question,
+                "section": "",
+                "tag": "input",
+                "input_type": "text",
+                "index": 0,
+                "role": "",
+                "options": [],
+                "required": True,
+                "visible": True,
+                "disabled": False,
+                "observed_value": "",
+                "checked": False,
+                "max_characters": None,
+                "max_words": None,
+            }
+        )
+
+    assert resolve(field("How did you hear about us?"), profile, target) == ""
+    assert resolve(field("What is your salary expectation?"), profile, target) == ""
+    assert (
+        resolve(
+            field("Disability: select an option or prefer not to say"),
+            profile,
+            target,
+        )
+        == ""
+    )
+
+
 def test_multipart_upload_allows_csrf_but_not_application_answers():
     from hashlib import sha256
     from types import SimpleNamespace
