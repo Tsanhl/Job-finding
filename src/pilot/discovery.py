@@ -106,6 +106,7 @@ class Discovery:
         self.testing = testing
         self.transport = transport
         self.browser = browser
+        self.source_checks = []
         from .resources import Cache
 
         self.cache = Cache(store)
@@ -174,6 +175,7 @@ class Discovery:
             "requested": requested,
             "returned": len(selected),
             "jobs": selected,
+            "source_checks": self.source_checks,
         }
 
     def register_source(self, url, name=""):
@@ -197,6 +199,17 @@ class Discovery:
 
     async def _read(self, source):
         async def producer():
+            public_api = _greenhouse_api(source)
+            if public_api:
+                endpoint, board, job_id = public_api
+                payload = json.loads(
+                    await fetch_public(
+                        endpoint, testing=self.testing, transport=self.transport
+                    )
+                )
+                if str(payload.get("id")) != job_id:
+                    raise ValueError("Public vacancy identity changed")
+                return json.dumps(_greenhouse_entry(payload, board))
             try:
                 return await fetch_public(
                     source, testing=self.testing, transport=self.transport
@@ -222,7 +235,7 @@ class Discovery:
                     await context.close()
 
         return await self.cache.derive(
-            digest([source, "public-source-v2"]), "research", producer, ttl=300
+            digest([source, "public-source-v3"]), "research", producer, ttl=300
         )
 
     async def _sources(self, sources, budget):
@@ -235,7 +248,9 @@ class Discovery:
             except Exception:
                 # Each public source is independent; one unavailable adapter must
                 # not prevent the remaining bounded sources from being checked.
+                self.source_checks.append({"source": source, "status": "UNAVAILABLE"})
                 continue
+            before = len(rows)
             for entry in _entries(text):
                 _add_row(rows, row_indexes, _normalize(entry, source))
             detail_urls = _detail_links(text, source)[:remaining_detail_pages]
@@ -249,6 +264,15 @@ class Discovery:
                     _add_row(rows, row_indexes, _normalize(entry, detail_url))
                 if remaining_detail_pages <= 0:
                     break
+            self.source_checks.append(
+                {
+                    "source": source,
+                    "status": "PARSED"
+                    if len(rows) > before
+                    else "NO_STRUCTURED_VACANCIES",
+                    "returned": len(rows) - before,
+                }
+            )
             if remaining_detail_pages <= 0 or len(rows) >= budget:
                 break
         for row in rows:
@@ -268,6 +292,45 @@ class Discovery:
                     (run_id, index, row["identity"], encode(row)),
                 )
         return run_id
+
+
+def _greenhouse_api(source):
+    parsed = urlsplit(source)
+    if parsed.hostname not in {
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+        "job-boards.eu.greenhouse.io",
+    }:
+        return None
+    match = re.fullmatch(r"/([A-Za-z0-9_-]+)/jobs/(\d+)/?", parsed.path)
+    if not match:
+        return None
+    board, job_id = match.groups()
+    return (
+        f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{job_id}",
+        board,
+        job_id,
+    )
+
+
+def _greenhouse_entry(payload, board):
+    location = _text(payload.get("location"))
+    from .job_sources.countries import country_code
+
+    countries = {
+        country_code(part.strip()) for part in re.split(r"[,;/|]", location)
+    } - {""}
+    return {
+        "title": payload.get("title"),
+        "employer": payload.get("company_name"),
+        "url": payload.get("absolute_url"),
+        "identity": f"greenhouse:{board}:{payload['id']}",
+        "location": location,
+        "country": next(iter(countries)) if len(countries) == 1 else "",
+        "description": html.unescape(payload.get("content") or ""),
+        "datePosted": payload.get("first_published"),
+        "closingDate": payload.get("application_deadline"),
+    }
 
 
 def _entries(text):
@@ -304,9 +367,7 @@ def _entries(text):
 def _detail_links(text, source):
     provider = provider_for(source)
     links = []
-    for href in re.findall(
-        r'href\s*=\s*["\']([^"\']+)["\']', text, re.IGNORECASE
-    ):
+    for href in re.findall(r'href\s*=\s*["\']([^"\']+)["\']', text, re.IGNORECASE):
         url = urljoin(source, html.unescape(href))
         parsed = urlsplit(url)
         if (
@@ -316,17 +377,29 @@ def _detail_links(text, source):
             continue
         path = parsed.path.casefold()
         relevant = (
-            provider == "bright_network"
-            and path.startswith("/graduate-jobs/")
-            and path.count("/") >= 3
-        ) or (provider == "workday" and "/job/" in path) or (
-            provider in {"allhires", "apply4law"}
-            and any(part in path for part in ("job", "vacan", "opportun", "apply"))
-        ) or (
-            not provider
-            and any(
-                part in path
-                for part in ("job", "vacan", "career", "position", "opening", "role")
+            (
+                provider == "bright_network"
+                and path.startswith("/graduate-jobs/")
+                and path.count("/") >= 3
+            )
+            or (provider == "workday" and "/job/" in path)
+            or (
+                provider in {"allhires", "apply4law"}
+                and any(part in path for part in ("job", "vacan", "opportun", "apply"))
+            )
+            or (
+                not provider
+                and any(
+                    part in path
+                    for part in (
+                        "job",
+                        "vacan",
+                        "career",
+                        "position",
+                        "opening",
+                        "role",
+                    )
+                )
             )
         )
         if relevant:
@@ -361,23 +434,36 @@ def _normalize(entry, source):
             or entry.get("deadline")
         )
         or "Unknown",
-        "opening": _text(entry.get("openingDate"))
-        or "Unknown",
+        "opening": _text(entry.get("openingDate")) or "Unknown",
         "posted": _text(entry.get("datePosted")) or "Unknown",
         "requirements": _requirements(entry)[:4000] or "Not stated in source",
         "location": _location(entry)[:500] or "Unknown",
+        "country": _country(entry),
         "employment_type": _text(
             entry.get("employmentType") or entry.get("employment_type")
         )
         or "Unknown",
-        "status_note": _text(
-            entry.get("status_note") or entry.get("actionRequired")
-        ),
+        "status_note": _text(entry.get("status_note") or entry.get("actionRequired")),
         "portal_check": "CHECK PORTAL",
         "source": source,
         "provider": provider_for(source) or "supplied",
         "checked_at": time.time(),
     }
+
+
+def _country(entry):
+    country = entry.get("country")
+    location = entry.get("jobLocation")
+    if isinstance(location, list):
+        location = location[0] if len(location) == 1 else None
+    if not country and isinstance(location, dict):
+        address = location.get("address") or {}
+        if isinstance(address, dict):
+            country = address.get("addressCountry")
+    country = _text(country).strip()
+    aliases = {"UK": "GB", "UNITED KINGDOM": "GB", "UNITED STATES": "US"}
+    country = aliases.get(country.upper(), country.upper())
+    return country if re.fullmatch(r"[A-Z]{2}", country) else ""
 
 
 def _text(value):
@@ -495,11 +581,11 @@ def format_job(row, *, markdown=False):
     timing = str(row.get("status_note") or "").strip()
     if not timing:
         if opening and deadline:
-            timing = f"Opened {opening}; deadline {deadline}"
+            timing = f"Opening: {opening}; deadline {deadline}"
         elif deadline:
             timing = f"Deadline {deadline}"
         elif opening:
-            timing = f"Opened {opening}; closing date unverified"
+            timing = f"Opening: {opening}; closing date unverified"
         else:
             timing = "Opening and closing times unverified"
     url = str(row.get("url") or "")
@@ -545,4 +631,4 @@ def _location(entry):
                     )
                 )
             )
-    return "; ".join(filter(None, values))
+    return "; ".join(filter(None, values)) or _text(entry.get("location"))

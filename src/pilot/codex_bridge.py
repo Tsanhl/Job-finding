@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from .workspace import public_url
+from .candidate_matching import criteria
 
 
 class AppServer:
@@ -111,6 +112,9 @@ async def discover(request, home, server_factory=AppServer):
     if not shutil.which("codex") and server_factory is AppServer:
         raise ValueError("Install and sign in to Codex first")
     scratch = Path(home) / "codex-discovery"
+    filters = criteria(request).model_dump(
+        mode="json", exclude={"candidate", "include_in_alerts"}, exclude_unset=True
+    )
     scratch.mkdir(exist_ok=True, mode=0o700)
     async with asyncio.timeout(180):
         async with server_factory() as server:
@@ -164,10 +168,11 @@ async def discover(request, home, server_factory=AppServer):
                             "type": "text",
                             "text": json.dumps(
                                 {
-                                    "task": "Find public job listings or career-site roots matching these criteria. Return fewer if necessary.",
+                                    "task": "Find individual current public job vacancies matching these criteria. Prefer directly readable JobPosting pages or public ATS vacancy feeds. Avoid generic careers landing pages. Return fewer if necessary.",
                                     "query": query,
                                     "location": location,
                                     "requested": count,
+                                    "filters": filters,
                                 }
                             ),
                             "text_elements": [],

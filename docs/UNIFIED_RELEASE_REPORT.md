@@ -5,12 +5,12 @@ Validated on 12 September 2026 using the existing `.venv-upgrade` environment.
 | Check | Actual result |
 |---|---|
 | Preserved ApplyPilot baseline | 170 tests passed, six subtests passed before editing |
-| Final local synthetic CI | 222 tests passed, six subtests passed; 47.78 seconds |
+| Final local synthetic CI | 226 tests passed, six subtests passed; see the latest ignored local CI report for timings |
 | Browser concurrency | Measured overlap of 1, 2, 5 and 10 for the corresponding requested workers |
 | Merged UI | Real Chromium exercised profile save, preserved nested/custom facts, application reporting, assessment completion, reload and daily Gmail settings |
 | JobSignal adapters | Original synthetic collector/programme fixtures ported and passing |
 | Gmail | Injected provider/secret fixtures verified daily timing, manual sync, ambiguity, deduplication, partial failure and encrypted evidence; no live mailbox or native secret access |
-| Codex | Installed 0.153.2 app-server initialization and config protocol passed; request/disclosure behaviour tested with a synthetic app-server; no live model search performed |
+| Codex | Installed 0.153.2 app-server completed live public discovery; local Greenhouse API verification returned seven vacancy candidates. Synthetic tests verify that structured filters reach Codex and candidate profile fields do not |
 | Local security | Host, Origin, session and CSRF tests pass; dependency consistency check passes |
 | Privacy | Tracked files, staged contents, reachable Git blobs and commit messages passed the privacy gate; candidate values stay outside Git |
 | Live local cutover | Existing profile payload/version, document count and application count matched the consistent pre-change backup |
@@ -20,6 +20,18 @@ Command: `.venv-upgrade/bin/python scripts/run_local_ci.py`. Detailed results an
 
 The local MCP tools were registered with Codex. A tool connection reload may be required before they appear in a conversation. No chat history, profile values or mailbox content was submitted to a model during this change.
 
-Gmail's implemented cadence is 24 hours, with Sync now and catch-up while awake. Tracking remains disabled until the owner connects a mailbox and enables it. Assessment completion notices remain evidence to review against the correct component. Employer and LinkedIn acceptance, mailbox consent and a live Codex discovery request are not represented as synthetic-test successes.
+Gmail's implemented cadence is 24 hours, with Sync now and catch-up while awake. Tracking remains disabled until the owner connects a mailbox and enables it. Assessment completion notices remain evidence to review against the correct component. Employer and LinkedIn acceptance and mailbox consent remain untested live. Live public discovery is reported separately from synthetic tests.
 
 JobSignal's original demo-owner records remain in the verified archive. Settings offers a source-owner/count preview and explicit one-time import; its profile data becomes an unconfirmed proposal instead of overwriting the local owner's existing facts. The archived hosted-login, PostgreSQL and outgoing-delivery tests are not claimed as tests of the new local product.
+
+## Live public discovery follow-up
+
+A live public-source refresh returned two programme announcements. Bright Network returned HTTP 403; no attempt was made to bypass that restriction. The dashboard now records unavailable sources separately from pages with no extractable structured vacancies.
+
+Codex searches use the existing supported sign-in. Greenhouse-hosted individual vacancy pages are mapped to the documented public GET job endpoint, including European hosted-board links. No application POST or account action is involved. Returned vacancy IDs are checked; publication dates are not treated as opening dates. Other rendered ATS pages may still require registered collectors and can return no extracted jobs.
+
+Local matching now accepts legacy country-keyed work-right records without converting current work permission into unrestricted permission. Geographic uncertainty remains visible; results with an unknown country may be retained when the search permits unknowns. Candidate results are not assertions of eligibility or current application status.
+
+The stdio MCP server completed an actual initialization and tools-list check. Registration alone does not load tools into an already-running Codex conversation; a connection reload is still required there. Gmail remained disconnected throughout this validation.
+
+References: [Codex App Server](https://learn.chatgpt.com/docs/app-server), [Greenhouse public Job Board API](https://docs.greenhouse.io/job-board.html).

@@ -72,6 +72,8 @@ class WorkRight(Model):
     status: Literal["unrestricted", "time_limited", "needs_sponsorship", "unknown"] = "unknown"
     expires_on: date | None = None
     sponsorship_later: bool | None = None
+    authorized_to_work: bool | None = None
+    require_sponsorship: bool | None = None
     continuous_residence_years: float | None = Field(default=None, ge=0, le=100)
 
 

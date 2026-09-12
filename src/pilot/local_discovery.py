@@ -95,6 +95,9 @@ async def find(runtime, request):
                         if j.annual_salary_min is not None
                         else "unknown",
                         "checked": time.time(),
+                        "listing_kind": "programme_announcement"
+                        if source.kind in {"newton", "pwc", "programme"}
+                        else "vacancy",
                     }
                     job["opening"] = j.opens or "Unknown"
                     job["deadline"] = j.closes or "Unknown"

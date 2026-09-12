@@ -233,9 +233,14 @@ def match_job(job: Job, profile: Profile, search: Search) -> dict:
     right = min(rights, key=lambda w: {"unrestricted":0,"time_limited":1,"needs_sponsorship":2,"unknown":3}[w.status]) if rights else None
     if not work_countries:
         checks.append("Work country unknown; work-right matching not evaluated")
-    elif not right or right.status == "unknown":
+    elif not right or (right.status == "unknown" and right.authorized_to_work is not True):
         checks.append("Your work rights for this country need checking")
     else:
+        if right.status == "unknown":
+            reasons.append("You confirmed current permission to work in this country")
+            checks.append("Permission duration and any programme-specific work-right conditions still need checking")
+        if right.require_sponsorship is False:
+            reasons.append("You reported no current sponsorship requirement")
         if right.status == "needs_sponsorship":
             if req.sponsorship == "no" and supported("sponsorship"):
                 failures.append("You need sponsorship; reviewed advert states it is unavailable")

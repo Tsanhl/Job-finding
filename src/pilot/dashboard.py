@@ -63,6 +63,7 @@ PUBLIC_COMMANDS = {
     "workspace_portfolios",
     "workspace_portfolio_save",
     "workspace_find",
+    "workspace_discovery_status",
     "workspace_job",
     "workspace_cancel_job",
     "workspace_mail_status",

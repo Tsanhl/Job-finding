@@ -34,7 +34,10 @@ def candidate(payload):
             result.education.append(Education.model_validate(fields))
         except ValueError:
             continue  # preserve the source fact; uncertainty stays a check
-    for record in payload.get("work_rights", []):
+    rights = payload.get("work_rights", [])
+    if isinstance(rights, dict):
+        rights = [{**v, "country": k} for k, v in rights.items() if isinstance(v, dict)]
+    for record in rights if isinstance(rights, list) else []:
         if not isinstance(record, dict):
             continue
         fields = {
@@ -44,6 +47,9 @@ def candidate(payload):
         }
         if not fields.get("country"):
             continue  # Never default an unspecified right to GB.
+        if not fields.get("status"):
+            if record.get("require_sponsorship") is True:
+                fields["status"] = "needs_sponsorship"
         try:
             result.work_rights.append(WorkRight.model_validate(fields))
         except ValueError:

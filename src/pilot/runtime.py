@@ -567,6 +567,9 @@ class Runtime:
                 "mail": self.store.one(
                     "SELECT MAX(last_success) AS revision FROM mail_tracking"
                 )["revision"],
+                "discovery": self.store.one(
+                    "SELECT MAX(updated) AS revision FROM workspace_jobs"
+                )["revision"],
             }
         if op == "workspace_find":
 
@@ -580,6 +583,13 @@ class Runtime:
             from .local_discovery import source_list
 
             return source_list(self.workspace)
+        if op == "workspace_discovery_status":
+            return [
+                {**row, "result": json.loads(row["result"])}
+                for row in self.store.rows(
+                    "SELECT id,kind,state,created,updated,result FROM workspace_jobs WHERE kind IN ('discovery','codex-discovery') ORDER BY created DESC LIMIT 5"
+                )
+            ]
         if op == "workspace_source_save":
             from .local_discovery import save_source
 
@@ -628,16 +638,16 @@ class Runtime:
             async def codex_find():
                 result = await discover(request, self.store.path.parent)
                 # The model only discovers public candidate URLs. Re-fetch every source.
-                from .discovery import Discovery
+                from .local_discovery import find as local_find
 
-                verified = await Discovery(self.store, testing=self.testing).find(
+                verified = await local_find(
+                    self,
                     {
                         **request,
                         "sources": result["urls"][:10],
                         "include_builtin": False,
-                    }
+                    },
                 )
-                self.workspace.ingest(verified["jobs"])
                 return verified
 
             if request.get("disclosure_confirmed") is not True:

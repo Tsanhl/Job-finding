@@ -63,6 +63,10 @@ def test_codex_sends_only_explicit_criteria_and_disables_other_tools(tmp_path):
                 "query": "graduate engineering",
                 "requested": 2,
                 "profile": {"email": "private@example.test"},
+                "filters": {
+                    "countries": ["GB"],
+                    "candidate": {"email": "private@example.test"},
+                },
             },
             tmp_path,
             Server,
@@ -74,6 +78,8 @@ def test_codex_sends_only_explicit_criteria_and_disables_other_tools(tmp_path):
     assert thread["config"]["plugins.private_plugin.enabled"] is False
     assert thread["sandbox"] == "read-only" and thread["ephemeral"]
     assert "private@example.test" not in json.dumps(calls)
+    turn = next(p for m, p in calls if m == "turn/start")
+    assert json.loads(turn["input"][0]["text"])["filters"]["countries"] == ["GB"]
 
 
 def test_mcp_selected_fields_and_confirmation_boundaries():
@@ -255,3 +261,175 @@ def test_mail_cursor_failure_does_not_advance_past_unprocessed_message(tmp_path)
         asyncio.run(run())
     finally:
         store.close()
+
+
+def test_legacy_country_keyed_rights_preserve_known_facts_without_inventing_duration():
+    from src.pilot.candidate_matching import candidate, match
+
+    profile = {
+        "work_rights": {
+            "GB": {"authorized_to_work": True, "require_sponsorship": False}
+        }
+    }
+    right = candidate(profile).work_rights[0]
+    assert right.country == "GB" and right.status == "unknown"
+    assert right.authorized_to_work is True and right.require_sponsorship is False
+    result = match(
+        job(country="GB", requirements="A degree"),
+        profile,
+        {"filters": {"countries": ["GB"]}},
+    )
+    assert "Your work rights for this country need checking" not in result["checks"]
+    assert any("duration" in x for x in result["checks"])
+    assert candidate({"work_rights": [{"authorized_to_work": True}]}).work_rights == []
+
+
+def test_discovery_reports_unavailable_sources_and_country_and_future_dates(tmp_path):
+    import httpx
+    from src.pilot.discovery import Discovery, format_job
+
+    async def scenario():
+        store = Store(tmp_path / "discovery.sqlite3")
+
+        def response(request):
+            if request.url.host == "blocked.example.test":
+                return httpx.Response(403)
+            return httpx.Response(
+                200,
+                json={
+                    "title": "Graduate Engineer",
+                    "hiringOrganization": {"name": "Example"},
+                    "url": "https://example.test/job/1",
+                    "openingDate": "2099-09-14",
+                    "jobLocation": {"address": {"addressCountry": "GB"}},
+                },
+            )
+
+        try:
+            result = await Discovery(
+                store, testing=True, transport=httpx.MockTransport(response)
+            ).find(
+                {
+                    "query": "graduate",
+                    "requested": 1,
+                    "include_builtin": False,
+                    "sources": [
+                        "https://blocked.example.test/",
+                        "https://example.test/job/1",
+                    ],
+                }
+            )
+            assert result["source_checks"][0]["status"] == "UNAVAILABLE"
+            assert result["source_checks"][1]["status"] == "PARSED"
+            assert result["jobs"][0]["country"] == "GB"
+            assert "Opened" not in format_job(result["jobs"][0])
+        finally:
+            store.close()
+
+    asyncio.run(scenario())
+
+
+def test_codex_results_use_local_matching_and_exclude_wrong_country(
+    tmp_path, monkeypatch
+):
+    from src.pilot.discovery import Discovery
+
+    async def candidates(*args):
+        return {"urls": ["https://example.com/jobs"]}
+
+    async def verified(self, request):
+        return {
+            "jobs": [
+                job(identity="gb", country="GB"),
+                job(identity="us", country="US", url="https://example.com/jobs/2"),
+            ],
+            "returned": 2,
+            "requested": 2,
+            "run_id": "example",
+            "area": "graduate",
+        }
+
+    monkeypatch.setattr("src.pilot.codex_bridge.discover", candidates)
+    monkeypatch.setattr(Discovery, "find", verified)
+
+    async def scenario():
+        store = Store(tmp_path / "runtime.sqlite3")
+        try:
+            runtime = Runtime(store, None, testing=True)
+            started = await runtime.command(
+                {
+                    "op": "workspace_codex",
+                    "query": "graduate",
+                    "requested": 2,
+                    "filters": {"countries": ["GB"]},
+                    "disclosure_confirmed": True,
+                }
+            )
+            await runtime.background[started["job_id"]]
+            result = await runtime.command(
+                {"op": "workspace_job", "id": started["job_id"]}
+            )
+            assert result["state"] == "DONE"
+            assert [j["country"] for j in result["result"]["jobs"]] == ["GB"]
+            assert "matching" in result["result"]["jobs"][0]
+        finally:
+            store.close()
+
+    asyncio.run(scenario())
+
+
+def test_public_greenhouse_links_use_read_only_api_and_validate_identity(tmp_path):
+    import httpx
+    from src.pilot.discovery import Discovery, _greenhouse_api
+
+    assert (
+        _greenhouse_api("https://job-boards.greenhouse.io.evil.test/example/jobs/123")
+        is None
+    )
+    requests = []
+
+    def response(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": 123,
+                "title": "Graduate Engineer",
+                "company_name": "Example",
+                "location": {"name": "London, United Kingdom"},
+                "absolute_url": "https://job-boards.eu.greenhouse.io/example/jobs/123",
+                "content": "&lt;p&gt;Degree required&lt;/p&gt;",
+                "first_published": "2026-09-01",
+            },
+        )
+
+    async def scenario():
+        store = Store(tmp_path / "greenhouse.sqlite3")
+        try:
+            discovery = Discovery(
+                store, testing=True, transport=httpx.MockTransport(response)
+            )
+            r = await discovery.find(
+                {
+                    "query": "graduate",
+                    "requested": 1,
+                    "include_builtin": False,
+                    "sources": ["https://job-boards.eu.greenhouse.io/example/jobs/123"],
+                }
+            )
+            row = r["jobs"][0]
+            assert row["country"] == "GB" and row["opening"] == "Unknown"
+            assert row["location"] == "London, United Kingdom"
+            assert row["requirements"] == "Degree required"
+            assert all(
+                x.method == "GET" and x.url.host == "boards-api.greenhouse.io"
+                for x in requests
+            )
+            with pytest.raises(ValueError, match="identity changed"):
+                await discovery._read(
+                    "https://job-boards.greenhouse.io/example/jobs/456"
+                )
+        finally:
+            store.close()
+
+    asyncio.run(scenario())
