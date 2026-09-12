@@ -94,3 +94,11 @@ Use SUPERVISED/UNATTENDED only after the corresponding real evidence and explici
 Qualification evidence is hashed and bound to the current `src/pilot` implementation. SYNTHETIC accepts the successful local CI JSON report for the named workflow. SUPERVISED requires a JSON object with `application_id` and `receipt_reference` matching a persisted supervised portal receipt. UNATTENDED requires the preceding supervised qualification plus explicit confirmation. Editing evidence or code invalidates availability.
 
 The filling boundary suppresses native/implicit form submission and rejects unclassified network writes while the engine is active. A document transmission is permitted only to a same-origin upload/file/attachment endpoint with bytes matching an approved document (raw payload or a single-file multipart payload with supported CSRF metadata). Named provider save actions may transmit a checked form payload to its existing endpoint; unclassified save APIs and redirects require handoff. Browser guards are restored at handoff so the applicant can submit manually. This conservative endpoint contract is not universal certification of arbitrary third-party JavaScript.
+
+## Local reliability and complete recovery
+
+Opportunity pages use checked-time/identity keyset cursors. Saved/opened predicates are applied before paging; expiry and application-state predicates are evaluated before filling the result page. Assessment identity is scoped to the application plus normalized component label or an explicit test/round key. Multiple messages attach through assessment_evidence without resetting completion; ambiguous historical duplicates stay separate for review.
+
+Mail tracking distinguishes last_page_success from last_success (fully caught up). A one-page continuation becomes due after 30 seconds, with bounded retry backoff for transient errors. Normal polling remains daily after catch-up.
+
+EvidenceVault persists a stable native secret reference in workspace_settings, retaining the legacy derived reference on first upgrade. Complete offline recovery packages the database, hash-checked documents and the evidence key inside an authenticated encrypted bundle. Restores target a new workspace and new key mapping, pause runs and revoke grants while preserving uncertain attempts. See [RECOVERY.md](RECOVERY.md) for commands and limitations.

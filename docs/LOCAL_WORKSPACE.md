@@ -29,11 +29,11 @@ The launcher starts the existing singleton runtime if necessary. A stale running
 
 ## Gmail: once a day
 
-Connect a Google Desktop OAuth client in Settings, complete system-browser consent, then enable tracking for that mailbox. The first run covers the chosen bounded lookback (default 90 days). Subsequent runs are due 24 hours after the last successful run. **Sync now** can be used between automatic checks. Manual and scheduled runs share a lease and deduplication keys.
+Connect a Google Desktop OAuth client in Settings, complete system-browser consent, then enable tracking for that mailbox. The first run covers the chosen bounded lookback (default 90 days). Subsequent runs are due 24 hours after the last fully caught-up run. **Sync now** can be used between automatic checks. Manual and scheduled runs share a lease and deduplication keys.
 
 The Mac must be awake and the worker running. A missed interval is caught up after resuming; it is not replayed repeatedly. Closing a browser tab does not stop the runtime. Closing the launcher does. No startup service or Codex scheduled task is installed automatically.
 
-Metadata is checked before likely recruitment message bodies are fetched. Message evidence is encrypted using a Keychain-managed key. Matching requires the selected recipient and a unique employer/role match; ambiguous messages remain for user review. Invitations create separate assessments. Receipts, completion notices, interviews and outcome messages remain attributable evidence for review. A generic completion notice cannot automatically complete every component or verify a submission.
+Metadata is checked before likely recruitment message bodies are fetched. Message evidence is encrypted using a Keychain-managed key. Matching requires the selected recipient and a unique employer/role match; ambiguous messages remain for user review. Invitations and reminders with the same normalized component label share an assessment with multiple evidence records. Delivery prefixes such as “Reminder:” are ignored, but round numbers and other wording remain distinct. Ambiguous historical duplicates require the user to choose a specific assessment; they are not merged automatically. Receipts, completion notices, interviews and outcome messages remain attributable evidence for review. A generic completion notice cannot automatically complete every component or verify a submission.
 
 Deadline wording is preserved; ambiguous relative dates require a portal check. The tracker never opens assessment links, starts tests, answers assessments, sends mail, or marks messages read. Read-only Gmail scope covers mailbox access; recruitment filtering is an application rule, not a Google-enforced narrow scope. No real mailbox is used by automated tests.
 
@@ -59,7 +59,9 @@ The explicit active profile chooses one owner. Multiple legacy profile lineages 
 
 Settings supports a read-only JobSignal import preview. Select the source owner, review counts and demo status, then explicitly import. A consistent destination backup is created before writes; the fingerprint must match the preview. Repeating an unchanged import is a no-op. Historical applied labels become user-reported records, never verified receipts. Source files remain unchanged.
 
-Existing backup/restore commands remain available:
+The existing commands below create and restore **database-only** backups. They do not package document files or the mail-evidence key. Use the [complete recovery guide](RECOVERY.md) for a portable encrypted workspace bundle.
+
+Existing database-only commands remain available:
 
 ```sh
 .venv-upgrade/bin/python cli.py runtime backup /private/path/new-backup.sqlite3
@@ -88,3 +90,11 @@ My Information changes save locally when a field is left; the Save button remain
 Local Codex tools now include search_history, save_context, read_context, start_autofill and confirm_application_submitted. Discovery saves the optional original_prompt locally with query and filters, including failed or interrupted searches. That original text is not sent to the external discovery model. Older chat history is not read automatically: only text explicitly passed to the tools can be saved. Stored prompts are context, never fresh permission; reusable confirmed facts remain in the profile. Password and credential patterns are rejected. Reconnect the local tool server to load changed tool definitions.
 
 Migration 006 adds search_history and saved_context to the same private database. No competing profile or job ledger is introduced.
+
+## Reliability amendment
+
+Migration 007 adds a saved-opportunity index, stable assessment-key mappings, many-to-one assessment evidence and the last-page mail timestamp. Saved/opened filters run before pagination; expiry and application filters also run before counting the page. The dashboard loads 100 records at a time with Load more jobs. Cursors use checked time plus identity rather than offsets. Concurrent source refreshes may reorder records; refresh the view to restart paging.
+
+Gmail commits one provider page per continuation. Outstanding pages and the final initial-history catch-up are due after 30 seconds while enabled. The UI separates the last processed page from the last fully caught-up check. Transient failures retry after 60 seconds with exponential backoff capped at one hour; authentication failures require checking/reconnecting the account. An expired history cursor schedules bounded lookback reconciliation. Daily polling resumes only when caught up.
+
+Assessment reminders preserve completed states and attach their own deadline wording. Conflicting wording is flagged instead of silently changing an agreed deadline. The manual assessment form accepts a distinct test/round ID. Differently worded labels are not semantically merged automatically.

@@ -43,3 +43,6 @@ dashboard-url.txt
 .env.backup
 .env.migration
 .env.production
+
+# Encrypted private workspace recovery bundles
+*.apbundle

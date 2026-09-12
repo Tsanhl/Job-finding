@@ -61,6 +61,9 @@ def main(argv=None):
     for op in ("submitted", "open", "review", "detect-edits"):
         p = sub.add_parser(op)
         p.add_argument("application_id")
+    for operation in ("backup-workspace", "restore-workspace"):
+        command = sub.add_parser(operation)
+        command.add_argument("bundle")
     backup = sub.add_parser("backup")
     backup.add_argument("destination")
     preview = sub.add_parser("migration-preview")
@@ -144,6 +147,22 @@ def main(argv=None):
                 parser.error("--config is required")
             request["config_path"] = args.config
         print(json.dumps(client(request, args.home), indent=2))
+        return
+    if args.command in {"backup-workspace", "restore-workspace"}:
+        from getpass import getpass
+        from .recovery import backup_workspace, restore_workspace
+
+        secret = getpass("Recovery passphrase (not saved): ")
+        try:
+            if args.command == "backup-workspace":
+                if getpass("Confirm recovery passphrase: ") != secret:
+                    raise ValueError("Passphrases do not match")
+                result = backup_workspace(args.home, args.bundle, secret)
+            else:
+                result = restore_workspace(args.bundle, args.home, secret)
+            print(json.dumps(result))
+        finally:
+            secret = None
         return
     if args.command == "restore":
         from .maintenance import restore

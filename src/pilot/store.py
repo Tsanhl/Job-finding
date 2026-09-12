@@ -541,10 +541,14 @@ class Store:
         # Called only after acquiring the exclusive runtime OS lock. Never infer
         # that a remote side effect failed merely because a lease expired.
         with self.tx():
-            for row in self.rows("SELECT * FROM applications WHERE owner IS NOT NULL"):
+            for row in self.rows(
+                "SELECT * FROM applications WHERE owner IS NOT NULL OR state='SUBMITTING'"
+            ):
                 state = (
                     "SUBMISSION_UNCONFIRMED"
-                    if row["state"] == "SUBMITTING"
+                    if row["state"] in {"SUBMITTING", "SUBMISSION_UNCONFIRMED"}
+                    else row["state"]
+                    if row["state"] in {str(s) for s in DONE}
                     else "INCOMPLETE"
                 )
                 self.db.execute(

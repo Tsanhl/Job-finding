@@ -5,7 +5,7 @@ Validated on 12 September 2026 using the existing `.venv-upgrade` environment.
 | Check | Actual result |
 |---|---|
 | Preserved ApplyPilot baseline | 170 tests passed, six subtests passed before editing |
-| Final local synthetic CI | 232 tests passed, six subtests passed; see the latest test report for timings |
+| Final local synthetic CI | 244 tests passed, six subtests passed; see the latest test report for timings |
 | Browser concurrency | Measured overlap of 1, 2, 5 and 10 for the corresponding requested workers |
 | Merged UI | Real Chromium exercised profile save, preserved nested/custom facts, application reporting, assessment completion, reload and daily Gmail settings |
 | JobSignal adapters | Original synthetic collector/programme fixtures ported and passing |
@@ -45,3 +45,9 @@ Migration 006 adds private search requests and explicitly saved context to the e
 Job cards separate dates, location, pay, academic criteria and skills. Source excerpts preserve wording and suppress programme-training descriptions where recognised. Missing source dates and qualifications remain unverified; older truncated records may require a new discovery run for fuller extraction. Verified expiry hides active and saved listings without deleting application history. A bin button removes a saved association.
 
 Real Chromium verifies desktop/mobile layout, search reuse, profile autosave, repeated-record preservation, saved removal and submission confirmation. The full suite uses isolated records and intercepted pages. The actual local dashboard was opened read-only and existing profiles, documents and applications matched the pre-change backup. No employer, mailbox or live application operation was performed for this amendment; Gmail remains disabled until connected and enabled by its owner.
+
+## Four reliability fixes
+
+Validated against the complete local suite: 244 tests and six subtests passed. Saved-job regression data contains 1,205 opportunities, including 205 older saved jobs; keyset pagination preserves their visibility. Reminder evidence deduplicates against an application-scoped assessment identity while preserving completed states, distinct rounds and historical ambiguity. Gmail tests cover multi-page continuation across tracker restart, final history catch-up, transient retry and expired cursors.
+
+Complete encrypted recovery restores a separate synthetic workspace with approved documents, a new evidence-key mapping, decryptable messages and unchanged uncertain submission attempts/checkpoints. Runs pause, grants revoke and accounts require reconnection. Wrong passwords, modified bundles, missing documents/keys, active-runtime locks and existing destinations are rejected. Existing local profile/document/application rows matched the pre-change database backup after migration 007; Gmail remains disconnected. No native Keychain export/import, mailbox access, employer interaction or live restoration was performed. See [RECOVERY.md](RECOVERY.md).

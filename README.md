@@ -144,3 +144,5 @@ Captures, fingerprints, URL and the latest answer are held only in process memor
 - Keep application volume low and follow the terms of the sites you use.
 - Never commit `.env`, personalized prompts, candidate data, CVs, application drafts, browser data, or generated output. The repository ignore rules exclude these by default.
 - Enable the mandatory local pre-push gate once with `.venv-upgrade/bin/python scripts/install_hooks.py`; run it directly with `make privacy`.
+
+Complete encrypted backups, including documents and mail-evidence recovery, are described in [the recovery guide](docs/RECOVERY.md).

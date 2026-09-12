@@ -65,6 +65,10 @@ def no_secrets(value):
             raise ValueError("Credentials cannot be stored as reusable information")
 
 
+class AssessmentIdentityError(ValueError):
+    pass
+
+
 class Workspace:
     def __init__(self, store):
         self.store = store
@@ -149,11 +153,33 @@ class Workspace:
                     (identity, encode(job), time.time(), time.time()),
                 )
 
-    def opportunities(self, filter="all"):
+    def opportunities(self, filter="all", *, limit=1000, cursor=None):
+        if filter not in {"all", "saved", "opened", "new", "unapplied"}:
+            raise ValueError("Unknown opportunity filter")
+        if type(limit) is not int or not 1 <= limit <= 1001:
+            raise ValueError("Page size must be an integer from 1 to 1000")
+        where, args = [], []
+        if filter == "saved":
+            where.append("saved=1")
+        elif filter == "opened":
+            where.append("opened IS NOT NULL")
+        if cursor is not None:
+            if (
+                not isinstance(cursor, dict)
+                or type(cursor.get("checked")) not in (int, float)
+                or not isinstance(cursor.get("identity"), str)
+            ):
+                raise ValueError("Invalid opportunity cursor")
+            where.append("(checked < ? OR (checked = ? AND identity > ?))")
+            args.extend([cursor["checked"], cursor["checked"], cursor["identity"]])
+        sql = (
+            "SELECT * FROM opportunity_index"
+            + (" WHERE " + " AND ".join(where) if where else "")
+            + " ORDER BY checked DESC,identity ASC"
+        )
         result = []
-        for row in self.store.rows(
-            "SELECT * FROM opportunity_index ORDER BY checked DESC LIMIT 1000"
-        ):
+        # Iterate lazily: expiry and application-state filters precede the page limit too.
+        for row in self.store.db.execute(sql, args):
             item = {
                 **json.loads(row["payload"]),
                 **{
@@ -201,7 +227,21 @@ class Workspace:
             if filter == "unapplied" and item["applied"]:
                 continue
             result.append(item)
+            if len(result) >= limit:
+                break
         return result
+
+    def opportunity_page(self, filter="all", limit=100, cursor=None):
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Page size must be an integer from 1 to 1000")
+        rows = self.opportunities(filter, limit=limit + 1, cursor=cursor)
+        items = rows[:limit]
+        next_cursor = (
+            {k: items[-1][k] for k in ("checked", "identity")}
+            if len(rows) > limit
+            else None
+        )
+        return {"items": items, "next_cursor": next_cursor}
 
     def job(self, identity):
         row = self.store.one(
@@ -318,6 +358,22 @@ class Workspace:
                 "SELECT * FROM assessments WHERE application_id=? ORDER BY created",
                 (r["id"],),
             )
+            for assessment in r["assessments"]:
+                assessment["evidence"] = self.store.rows(
+                    "SELECT evidence_id,deadline FROM assessment_evidence WHERE assessment_id=? ORDER BY created",
+                    (assessment["id"],),
+                )
+                assessment["deadline_conflict"] = (
+                    len(
+                        {x["deadline"] for x in assessment["evidence"] if x["deadline"]}
+                        | (
+                            {assessment["deadline"]}
+                            if assessment["deadline"]
+                            else set()
+                        )
+                    )
+                    > 1
+                )
             r["outcome"] = r["outcome"] or (
                 "Awaiting response"
                 if r["state"].startswith("SUBMITTED_")
@@ -384,17 +440,65 @@ class Workspace:
                 )
         return sorted(rows, key=lambda r: r["created"], reverse=True)[:100]
 
-    def assessment(self, app, component, deadline="", evidence=None):
+    @staticmethod
+    def component_key(component):
+        import re
+
+        value = " ".join(str(component).casefold().split())
+        # Strip delivery prefixes only; retain test name, round, provider and all other wording.
+        return re.sub(r"^(?:(?:re|fw|fwd|reminder)\s*[:–—-]\s*)+", "", value)
+
+    def assessment(
+        self, app, component, deadline="", evidence=None, component_key=None
+    ):
         self.assert_app(app)
         if not str(component).strip():
             raise ValueError("Assessment name is required")
-        id = digest([app, evidence, component]) if evidence else uid()
+        key = (
+            "explicit:" + str(component_key)
+            if component_key
+            else "label:" + self.component_key(component)
+        )
         with self.store.tx():
-            self.store.db.execute(
-                "INSERT OR IGNORE INTO assessments(id,application_id,component,status,deadline,evidence_id,created) VALUES(?,?,?,'TO_DO',?,?,?)",
-                (id, app, component, deadline, evidence, time.time()),
+            found = self.store.one(
+                "SELECT assessment_id FROM assessment_keys WHERE application_id=? AND component_key=?",
+                (app, key),
             )
-            self.event(app, "assessment-added", {"assessment": id})
+            if not found and not component_key:
+                legacy = [
+                    r
+                    for r in self.store.rows(
+                        "SELECT id,component FROM assessments WHERE application_id=?",
+                        (app,),
+                    )
+                    if self.component_key(r["component"])
+                    == self.component_key(component)
+                ]
+                if len(legacy) == 1:
+                    found = {"assessment_id": legacy[0]["id"]}
+                elif len(legacy) > 1:
+                    raise AssessmentIdentityError(
+                        "Multiple historical assessment records match; choose an explicit component identity"
+                    )
+            id = found["assessment_id"] if found else digest([app, key])
+            created = (
+                self.store.one("SELECT id FROM assessments WHERE id=?", (id,)) is None
+            )
+            if created:
+                self.store.db.execute(
+                    "INSERT INTO assessments(id,application_id,component,status,deadline,evidence_id,created) VALUES(?,?,?,'TO_DO',?,?,?)",
+                    (id, app, component, deadline, evidence, time.time()),
+                )
+            self.store.db.execute(
+                "INSERT OR IGNORE INTO assessment_keys VALUES(?,?,?)", (app, key, id)
+            )
+            if evidence:
+                self.store.db.execute(
+                    "INSERT OR IGNORE INTO assessment_evidence VALUES(?,?,?,?)",
+                    (id, evidence, deadline, time.time()),
+                )
+            if created:
+                self.event(app, "assessment-added", {"assessment": id})
         return {"id": id}
 
     def complete_assessment(self, id, revision):
@@ -464,6 +568,12 @@ class Workspace:
             return self.select_profile(request["version"])
         if op == "workspace_save_profile":
             return self.save_profile(request["payload"], request["parent"])
+        if op == "workspace_opportunity_page":
+            return self.opportunity_page(
+                request.get("filter", "all"),
+                request.get("limit", 100),
+                request.get("cursor"),
+            )
         if op == "workspace_opportunities":
             return self.opportunities(request.get("filter", "all"))
         if op == "workspace_ingest":
@@ -498,6 +608,7 @@ class Workspace:
                 request["application_id"],
                 request["component"],
                 request.get("deadline", ""),
+                component_key=request.get("component_key"),
             )
         if op == "workspace_assessment_complete":
             return self.complete_assessment(request["id"], request["revision"])

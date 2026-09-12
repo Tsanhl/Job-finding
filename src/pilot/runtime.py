@@ -635,7 +635,9 @@ class Runtime:
         if op == "workspace_mail_messages":
             return self.tracking.messages()
         if op == "workspace_mail_resolve":
-            return self.tracking.resolve(request["id"], request["application_id"])
+            return self.tracking.resolve(
+                request["id"], request["application_id"], request.get("assessment_id")
+            )
         if op == "workspace_codex":
             from .codex_bridge import discover
 

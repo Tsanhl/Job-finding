@@ -230,6 +230,10 @@ def test_daily_mail_lease_idempotency_manual_sync_and_sleep(workspace):
     async def run():
         await tracker.tick()
         assert len(workspace.history()[0]["assessments"]) == 1
+        # Finish the initial scan by catching up from its captured history anchor.
+        now[0] += 30
+        await tracker.tick()
+        assert tracker.status()[0]["status"] == "UP_TO_DATE"
         count = len(calls)
         now[0] += 300
         await tracker.tick()

@@ -54,6 +54,7 @@ PUBLIC_COMMANDS = {
     "workspace_save_profile",
     "workspace_catalog",
     "workspace_opportunities",
+    "workspace_opportunity_page",
     "workspace_job_action",
     "workspace_applied",
     "workspace_history",

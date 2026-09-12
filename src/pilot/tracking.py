@@ -15,18 +15,41 @@ from cryptography.fernet import Fernet
 from .mail import Gmail
 from .secrets import NativeSecrets
 from .store import digest, encode
+from .workspace import AssessmentIdentityError
 
 DAY = 86400
+CONTINUATION = 30
+RETRY_BASE = 60
+RETRY_MAX = 3600
 
 
 class EvidenceVault:
     def __init__(self, store, backend=None):
         self.backend = backend or NativeSecrets()
-        self.ref = "ApplyPilot:Evidence:" + digest(str(store.path))[:24]
+        self.store = store
+        saved = store.one(
+            "SELECT payload FROM workspace_settings WHERE key='evidence_vault'"
+        )
+        self.ref = (
+            json.loads(saved["payload"])["ref"]
+            if saved
+            else "ApplyPilot:Evidence:" + digest(str(store.path))[:24]
+        )
+        if not saved:
+            store.db.execute(
+                "INSERT INTO workspace_settings VALUES('evidence_vault',?,?)",
+                (encode({"ref": self.ref}), time.time()),
+            )
 
-    def cipher(self):
+    def cipher(self, create=True):
         key = self.backend._read(self.ref, "local-owner")
         if not key:
+            if not create or self.store.one(
+                "SELECT id FROM recruitment_messages LIMIT 1"
+            ):
+                raise ValueError(
+                    "Mail evidence key is unavailable; restore its recovery bundle"
+                )
             key = Fernet.generate_key().decode()
             self.backend.put(self.ref, "local-owner", key, replace=False)
         return Fernet(key.encode())
@@ -35,7 +58,7 @@ class EvidenceVault:
         return self.cipher().encrypt(encode(payload).encode()).decode()
 
     def open(self, payload):
-        return json.loads(self.cipher().decrypt(payload.encode()))
+        return json.loads(self.cipher(create=False).decrypt(payload.encode()))
 
 
 def parse_message(message):
@@ -119,7 +142,7 @@ class MailTracking:
 
     def status(self):
         return self.store.rows(
-            "SELECT c.id,c.email,c.status AS connection_status,t.enabled,t.interval_seconds,t.lookback_days,t.next_due,t.last_success,t.status FROM mail_connections c LEFT JOIN mail_tracking t ON t.connection_id=c.id"
+            "SELECT c.id,c.email,c.status AS connection_status,t.enabled,t.interval_seconds,t.lookback_days,t.next_due,t.last_success,t.last_page_success,t.failures,t.status FROM mail_connections c LEFT JOIN mail_tracking t ON t.connection_id=c.id"
         )
 
     def configure(self, request):
@@ -136,13 +159,23 @@ class MailTracking:
         self.workspace.owner()
         with self.store.tx():
             old = self.store.one(
-                "SELECT last_success FROM mail_tracking WHERE connection_id=?", (id,)
+                "SELECT last_success,status,next_due FROM mail_tracking WHERE connection_id=?",
+                (id,),
             )
             due = (
                 max(self.clock(), (old["last_success"] or 0) + DAY)
                 if old
                 else self.clock()
             )
+            if old and old["status"] in {
+                "BACKLOG",
+                "RETRY_PENDING",
+                "CURSOR_EXPIRED",
+                "INTERRUPTED",
+            }:
+                due = max(
+                    self.clock(), min(old["next_due"], self.clock() + CONTINUATION)
+                )
             self.store.db.execute(
                 "INSERT INTO mail_tracking(connection_id,enabled,lookback_days,next_due,status) VALUES(?,?,?,?,?) ON CONFLICT(connection_id) DO UPDATE SET enabled=excluded.enabled,lookback_days=excluded.lookback_days,next_due=excluded.next_due,status=excluded.status,lease_until=0",
                 (id, int(enabled), days, due, "READY" if enabled else "DISABLED"),
@@ -171,12 +204,18 @@ class MailTracking:
         self.workspace.assert_app(app)
         kind = message["classification"]
         if kind == "ASSESSMENT":
-            self.workspace.assessment(
-                app,
-                evidence["subject"] or "Online assessment",
-                evidence["deadline"],
-                message["id"],
-            )
+            try:
+                self.workspace.assessment(
+                    app,
+                    evidence["subject"] or "Online assessment",
+                    evidence["deadline"],
+                    message["id"],
+                )
+            except AssessmentIdentityError:
+                return (
+                    False  # Leave ambiguous historical duplicates in the review queue.
+                )
+
         # Completion, interviews and receipts remain reviewable evidence. A generic message
         # cannot confirm every test, manufacture a receipt, or overwrite a manual outcome.
         self.workspace.event(
@@ -187,7 +226,7 @@ class MailTracking:
             (app, message["id"]),
         )
 
-    def resolve(self, id, app):
+    def resolve(self, id, app, assessment_id=None):
         row = self.store.one("SELECT * FROM recruitment_messages WHERE id=?", (id,))
         if not row:
             raise ValueError("Unknown message")
@@ -196,8 +235,37 @@ class MailTracking:
             if row["application_id"] != app:
                 raise ValueError("Message already linked to another application")
             return {"linked": True}
+        evidence = self.vault.open(row["protected_payload"])
         with self.store.tx():
-            self.apply_evidence(row, self.vault.open(row["protected_payload"]), app)
+            if assessment_id:
+                assessment = self.store.one(
+                    "SELECT application_id FROM assessments WHERE id=?",
+                    (assessment_id,),
+                )
+                if (
+                    not assessment
+                    or assessment["application_id"] != app
+                    or row["classification"]
+                    not in {"ASSESSMENT", "ASSESSMENT_COMPLETE"}
+                ):
+                    raise ValueError(
+                        "Choose an assessment belonging to this application"
+                    )
+                self.store.db.execute(
+                    "INSERT OR IGNORE INTO assessment_evidence VALUES(?,?,?,?)",
+                    (assessment_id, id, evidence["deadline"], self.clock()),
+                )
+                self.store.db.execute(
+                    "UPDATE recruitment_messages SET application_id=?,resolved=1 WHERE id=?",
+                    (app, id),
+                )
+                self.workspace.event(
+                    app,
+                    "assessment-evidence-linked",
+                    {"assessment": assessment_id, "evidence_id": id},
+                )
+            elif self.apply_evidence(row, evidence, app) is False:
+                return {"linked": False, "needs_assessment": True}
         return {"linked": True}
 
     def messages(self):
@@ -242,14 +310,23 @@ class MailTracking:
                 return result
             except asyncio.CancelledError:
                 self.store.db.execute(
-                    "UPDATE mail_tracking SET lease_until=0,status='INTERRUPTED' WHERE connection_id=? AND lease_until=?",
-                    (connection, lease),
+                    "UPDATE mail_tracking SET lease_until=0,status='INTERRUPTED',next_due=? WHERE connection_id=? AND lease_until=?",
+                    (self.clock() + CONTINUATION, connection, lease),
                 )
                 raise
-            except Exception:
+            except Exception as error:
+                status = "RETRY_PENDING"
+                delay = min(RETRY_MAX, RETRY_BASE * 2 ** min(row["failures"], 6))
+                if isinstance(error, httpx.HTTPStatusError):
+                    if error.response.status_code in (401, 403):
+                        status, delay = "CHECK_CONNECTION", DAY
+                    else:
+                        retry = error.response.headers.get("Retry-After", "")
+                        if retry.isdigit():
+                            delay = min(RETRY_MAX, max(delay, int(retry)))
                 self.store.db.execute(
-                    "UPDATE mail_tracking SET lease_until=0,status='CHECK_CONNECTION',next_due=?,failures=failures+1 WHERE connection_id=? AND lease_until=?",
-                    (self.clock() + DAY, connection, lease),
+                    "UPDATE mail_tracking SET lease_until=0,status=?,next_due=?,failures=failures+1 WHERE connection_id=? AND lease_until=?",
+                    (status, self.clock() + delay, connection, lease),
                 )
                 raise
 
@@ -267,12 +344,12 @@ class MailTracking:
                 if e.response.status_code != 404:
                     raise
                 self.store.db.execute(
-                    "UPDATE mail_tracking SET history_id=NULL,page_token=NULL,sync_mode='initial',anchor_history=NULL,lease_until=0,status='CURSOR_EXPIRED',next_due=? WHERE connection_id=?",
-                    (self.clock() + DAY, connection),
+                    "UPDATE mail_tracking SET history_id=NULL,page_token=NULL,sync_mode='initial',anchor_history=NULL,lease_until=0,status='CURSOR_EXPIRED',next_due=? WHERE connection_id=? AND lease_until=?",
+                    (self.clock() + CONTINUATION, connection, lease),
                 )
                 return {
                     "state": "CURSOR_EXPIRED",
-                    "next_action": "Sync now to reconcile the configured lookback",
+                    "next_action": "Automatic lookback reconciliation scheduled shortly",
                 }
             ids = list(
                 dict.fromkeys(
@@ -294,6 +371,12 @@ class MailTracking:
         else:
             if not anchor:
                 anchor = (await self.gmail.request(connection, "/profile"))["historyId"]
+                with self.store.tx():
+                    self._guard(connection, lease)
+                    self.store.db.execute(
+                        "UPDATE mail_tracking SET anchor_history=? WHERE connection_id=?",
+                        (anchor, connection),
+                    )
             params["q"] = (
                 f'newer_than:{row["lookback_days"]}d {{assessment application interview psychometric "online test" "coding test"}}'
             )
@@ -350,26 +433,28 @@ class MailTracking:
             if token
             else (response.get("historyId") if mode == "history" else anchor)
         )
+        pending = bool(token) or mode == "initial"
         with self.store.tx():
             self._guard(connection, lease)
             self.store.db.execute(
-                "UPDATE mail_tracking SET history_id=?,page_token=?,sync_mode=?,anchor_history=?,last_success=?,next_due=?,lease_until=0,status=?,failures=0 WHERE connection_id=?",
+                "UPDATE mail_tracking SET history_id=?,page_token=?,sync_mode=?,anchor_history=?,last_success=?,next_due=?,lease_until=0,status=?,failures=0,last_page_success=? WHERE connection_id=?",
                 (
                     history,
                     token,
                     mode if token else "history",
                     anchor if token else None,
+                    row["last_success"] if pending else self.clock(),
+                    self.clock() + (CONTINUATION if pending else DAY),
+                    "BACKLOG" if pending else "UP_TO_DATE",
                     self.clock(),
-                    self.clock() + DAY,
-                    "BACKLOG" if token else "UP_TO_DATE",
                     connection,
                 ),
             )
         return {
-            "state": "BACKLOG" if token else "UP_TO_DATE",
+            "state": "BACKLOG" if pending else "UP_TO_DATE",
             "processed": processed,
-            "next_action": "Sync now to continue older messages"
-            if token
+            "next_action": "Automatic continuation scheduled shortly"
+            if pending
             else "Next automatic check in one day",
         }
 
