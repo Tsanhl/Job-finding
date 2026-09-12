@@ -28,7 +28,18 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
             {
                 "full_name": "Synthetic Candidate",
                 "location": "Home City",
-                "education": [{"institution": "Example University", "degree": "BSc"}],
+                "education": [
+                    {
+                        "id": "record-a",
+                        "institution": "Example University",
+                        "degree": "BSc",
+                    },
+                    {
+                        "id": "record-b",
+                        "institution": "Second University",
+                        "degree": "MSc",
+                    },
+                ],
                 "work_experience": [
                     {
                         "employer": "Example Office",
@@ -48,10 +59,20 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     "role": "Graduate Engineer",
                     "employer": "Example Employer",
                     "url": "https://example.com/jobs/1",
-                    "requirements": "A degree",
+                    "requirements": "A postgraduate degree in computing is required. Python skills are essential.",
                     "opening_date": "2026-09-12",
                 }
             ]
+        )
+        w.remember_search(
+            {
+                "query": "graduate legal",
+                "requested": 3,
+                "filters": {"countries": ["GB"]},
+                "original_prompt": "Find graduate legal work.",
+            },
+            "discovery",
+            None,
         )
         store.close()
         process = subprocess.Popen(
@@ -96,6 +117,49 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     ).count()
                     == 0
                 )
+                assert (
+                    await page.get_by_role(
+                        "button", name="Discovery status", exact=False
+                    ).count()
+                    == 0
+                )
+                await page.get_by_role(
+                    "heading", name="Academic & entry requirements"
+                ).wait_for()
+                await page.get_by_role("button", name="Save", exact=True).click()
+                await page.get_by_role(
+                    "button", name="Saved opportunities", exact=False
+                ).click()
+                await page.get_by_role(
+                    "button", name="Remove saved opportunity", exact=True
+                ).click()
+                await page.get_by_role(
+                    "button", name="Remove saved opportunity", exact=True
+                ).wait_for(state="hidden")
+                await page.get_by_role(
+                    "button", name="Search history", exact=False
+                ).click()
+                await page.get_by_role(
+                    "button", name="Use this search", exact=True
+                ).click()
+                assert (
+                    await page.locator('input[name="query"]').input_value()
+                    == "graduate legal"
+                )
+                output = Path("output/unified-validation")
+                output.mkdir(parents=True, exist_ok=True)
+                await page.screenshot(
+                    path=str(output / "discovery-redesign-synthetic.png"),
+                    full_page=True,
+                )
+                await page.set_viewport_size({"width": 390, "height": 844})
+                await page.screenshot(
+                    path=str(output / "discovery-mobile-synthetic.png"), full_page=True
+                )
+                assert await page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                await page.set_viewport_size({"width": 1400, "height": 1000})
                 await page.get_by_role(
                     "button", name="My Information", exact=False
                 ).click()
@@ -103,6 +167,43 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     "heading", name="My Information", exact=True
                 ).wait_for()
                 await page.locator('input[name="full_name"]').fill("Synthetic Updated")
+                await page.locator('input[name="full_name"]').press("Tab")
+                await (
+                    page.locator("#save-status")
+                    .filter(has_text="Saved locally")
+                    .wait_for()
+                )
+                automatic = await asyncio.to_thread(
+                    client, {"op": "workspace_profile"}, home
+                )
+                assert automatic["payload"]["full_name"] == "Synthetic Updated"
+
+                def profile_response(response):
+                    return (
+                        response.request.method == "POST"
+                        and (response.request.post_data_json or {}).get("op")
+                        == "workspace_save_profile"
+                    )
+
+                async with page.expect_response(profile_response):
+                    await (
+                        page.locator('[data-record="education"]')
+                        .first.get_by_role("button", name="Remove record", exact=True)
+                        .click()
+                    )
+                remaining = page.locator(
+                    '[data-record="education"] input[name="degree"]'
+                )
+                await remaining.fill("MSc Computing")
+                async with page.expect_response(profile_response):
+                    await remaining.press("Tab")
+                records = (
+                    await asyncio.to_thread(client, {"op": "workspace_profile"}, home)
+                )["payload"]["education"]
+                assert len(records) == 1
+                assert records[0]["id"] == "record-b"
+                assert records[0]["degree"] == "MSc Computing"
+
                 await page.get_by_role(
                     "button", name="Save my information", exact=True
                 ).click()
@@ -120,6 +221,14 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     "button", name="Discover jobs", exact=False
                 ).click()
                 await page.get_by_role("button", name="I applied", exact=True).click()
+                await page.get_by_role("button", name="Not yet", exact=True).click()
+                assert not await asyncio.to_thread(
+                    client, {"op": "workspace_history"}, home
+                )
+                await page.get_by_role("button", name="I applied", exact=True).click()
+                await page.get_by_role(
+                    "button", name="Yes, I submitted it", exact=True
+                ).click()
                 await page.get_by_role(
                     "button", name="Applied History", exact=False
                 ).click()

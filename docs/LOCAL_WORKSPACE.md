@@ -17,12 +17,12 @@ The launcher starts the existing singleton runtime if necessary. A stale running
 | Section | Behaviour |
 |---|---|
 | Discover jobs | Bounded public searches, source requirements, dates and pay, locally persisted results and profile checks. Optional Codex search provides candidate URLs that are fetched again before listing. |
-| Search portfolios | Multiple named career directions, structured filters and notes; matching reads the common confirmed profile. Free-text notes are retained, not silently treated as enforced filters. |
+| Search history | Automatically saved prompts, filters, provider and outcomes from dashboard or local-tool discovery. Reuse a search without re-entering it. Older portfolios remain accessible here. |
 | My Information | Contact fields, repeated education/work/right-to-work/reference/project records, the existing 66-question catalogue, custom JSON and an approved-document file picker. Unknown and Boolean No remain distinct. |
-| Saved opportunities | A shortlist that is independent of application status. |
-| Autofill | The existing shared engine, grouped gaps, manual-edit detection, retained forms and pause/resume/stop. Each target defaults to final review. Explicit Submit still requires existing adapter qualification and current authority. LinkedIn remains review-only. |
+| Saved opportunities | A shortlist with a bin button to remove saved entries. Application history is unaffected. |
+| Autofill within Applied History | Ask Codex through the local tools to start filling. Track progress, grouped gaps, pause/resume/stop and manual edits alongside application records. Optional dashboard start controls are collapsed here. Each target defaults to review; submission still requires target authority and adapter qualification. |
 | Applied History | Manual entry, I applied, persistent application snapshots, notes, recruitment stages, separate assessment components and immediate user-reported completion. |
-| Discovery status | Career-site roots, imported public JobSignal source definitions and runtime health. |
+
 | Settings | Gmail connection, daily tracking, import preview and consistent backups. No outgoing Email alerts page. |
 
 **Newly opened** means an explicitly published application opening date within the last seven days. A posting date is not an opening date. **Link opened** records a user opening a job card. **Applied** requires user-reported or confirmed submission. Unsave, listing expiry and new assessment messages cannot erase or restart an application.
@@ -76,3 +76,15 @@ Run `.venv-upgrade/bin/python scripts/run_local_ci.py`. Added tests cover the or
 The former JobSignal public deployment, PostgreSQL, SMTP, Discord, demo-account and hosted login services are not part of this local product. Their original source/tests are preserved in the source archive; the relevant public collectors and programme tests are carried into this repository. This is not a claim that every former hosted-product test runs against the new local schema.
 
 Live employer, LinkedIn, native secret and mailbox acceptance remain separate from synthetic validation. A Codex protocol handshake confirms the installed interface, not an end-to-end search entitlement. No private data is pushed to GitHub by launching or using the application.
+
+## Simplified dashboard and saved context
+
+The technical Discovery status page is removed from navigation. Source registration and diagnostics remain available through the existing CLI/runtime for maintenance. Cards show location, opening and closing dates separately, plus short academic and skill excerpts from the advert. Missing dates are explicitly unverified; degree level is never inferred from a graduate job title. Full extracted text remains expandable.
+
+Passed explicit deadlines automatically hide vacancies from discovery and saved views. Date-only deadlines remain visible through that date in the local timezone. Relative, incomplete or unzoned time values do not trigger removal. Authoritative application snapshots, assessment history and search records survive expiry.
+
+My Information changes save locally when a field is left; the Save button remains available. History notes and stages also save on change. Saves preserve versions and reject stale edits. Search requests and application transitions are durable automatically. Marking a filled application submitted asks for a separate user confirmation; this records a user report, not a portal-verified receipt.
+
+Local Codex tools now include search_history, save_context, read_context, start_autofill and confirm_application_submitted. Discovery saves the optional original_prompt locally with query and filters, including failed or interrupted searches. That original text is not sent to the external discovery model. Older chat history is not read automatically: only text explicitly passed to the tools can be saved. Stored prompts are context, never fresh permission; reusable confirmed facts remain in the profile. Password and credential patterns are rejected. Reconnect the local tool server to load changed tool definitions.
+
+Migration 006 adds search_history and saved_context to the same private database. No competing profile or job ledger is introduced.

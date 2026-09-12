@@ -408,6 +408,8 @@ def _detail_links(text, source):
 
 
 def _normalize(entry, source):
+    from .job_presentation import requirement_sections
+
     role = _text(entry.get("title") or entry.get("role"))[:300]
     organisation = entry.get("hiringOrganization") or entry.get("employer")
     employer = _text(organisation)[:300]
@@ -437,6 +439,9 @@ def _normalize(entry, source):
         "opening": _text(entry.get("openingDate")) or "Unknown",
         "posted": _text(entry.get("datePosted")) or "Unknown",
         "requirements": _requirements(entry)[:4000] or "Not stated in source",
+        "requirement_sections": requirement_sections(
+            entry.get("description") or _requirements(entry)
+        ),
         "location": _location(entry)[:500] or "Unknown",
         "country": _country(entry),
         "employment_type": _text(

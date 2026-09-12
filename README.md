@@ -2,8 +2,8 @@
 
 The current local dashboard combines JobSignal's design and discovery adapters
 with ApplyPilot's private profile, autofill and application history. It exposes
-Discover jobs, Search portfolios, My Information, Saved opportunities, Autofill,
-Applied History, Discovery status and Settings. Gmail tracking is opt-in, once
+Discover jobs, Search history, My Information, Saved opportunities,
+Applied History (including autofill progress) and Settings. Gmail tracking is opt-in, once
 every 24 hours with Sync now. Open it with `Open ApplyPilot.command` or
 `.venv-upgrade/bin/python -m src.pilot.desktop`.
 

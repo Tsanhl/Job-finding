@@ -86,16 +86,19 @@ class Runtime:
                     ) from None
         return self.browser
 
-    def background_job(self, kind, operation):
+    def background_job(self, kind, operation, request=None):
         if len(self.background) >= 3:
             raise ValueError(
                 "Three background operations are active; wait for one to finish"
             )
         job = uid()
-        self.store.db.execute(
-            "INSERT INTO workspace_jobs(id,kind,state,created,updated) VALUES(?,?,'RUNNING',?,?)",
-            (job, kind, time.time(), time.time()),
-        )
+        with self.store.tx():
+            self.store.db.execute(
+                "INSERT INTO workspace_jobs(id,kind,state,created,updated) VALUES(?,?,'RUNNING',?,?)",
+                (job, kind, time.time(), time.time()),
+            )
+            if request is not None:
+                self.workspace.remember_search(request, kind, job)
 
         async def run():
             try:
@@ -567,6 +570,7 @@ class Runtime:
                 "mail": self.store.one(
                     "SELECT MAX(last_success) AS revision FROM mail_tracking"
                 )["revision"],
+                "expiry_clock": int(time.time() // 60),
                 "discovery": self.store.one(
                     "SELECT MAX(updated) AS revision FROM workspace_jobs"
                 )["revision"],
@@ -578,7 +582,7 @@ class Runtime:
 
                 return await local_find(self, request)
 
-            return self.background_job("discovery", find)
+            return self.background_job("discovery", find, request)
         if op == "workspace_sources":
             from .local_discovery import source_list
 
@@ -654,7 +658,7 @@ class Runtime:
                 raise PermissionError(
                     "Approve sending these search criteria to Codex first"
                 )
-            return self.background_job("codex-discovery", codex_find)
+            return self.background_job("codex-discovery", codex_find, request)
         if isinstance(op, str) and op.startswith("workspace_"):
             result = self.workspace.command(request)
             if isinstance(result, dict) and result.get("state") in {
@@ -749,6 +753,15 @@ class Runtime:
                 )
             return await choose(page.url, testing=self.testing).audit(page)
         if op == "start":
+            if request.get("original_prompt"):
+                self.workspace.command(
+                    {
+                        "op": "workspace_save_context",
+                        "content": request["original_prompt"],
+                        "kind": "autofill",
+                        "user_requested_save": True,
+                    }
+                )
             return await self.start(request["plan"])
         if op == "setup_status":
             from .onboarding import setup_status
@@ -817,11 +830,16 @@ class Runtime:
             }
         if op == "submitted":
             app = request["application_id"]
-            self.store.user_submitted(app)
+            self.workspace.assert_app(app)
+            row = self.store.one(
+                "SELECT a.id,v.identity,v.url,v.role,e.name AS employer FROM applications a JOIN vacancies v ON v.id=a.vacancy_id JOIN employers e ON e.id=v.employer_id WHERE a.id=?",
+                (app,),
+            )
+            result = self.workspace.applied(row)
             worker = self.active.get(app)
             if worker:
                 worker.cancel()
-            return {"state": "SUBMITTED_USER_REPORTED"}
+            return result
         if op in {"pause", "stop", "resume"}:
             run = request["run_id"]
             if op == "resume":

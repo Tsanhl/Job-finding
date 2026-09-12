@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from .store import digest, encode, uid
+from .job_presentation import expired, requirement_sections
 
 
 def public_url(value):
@@ -54,6 +55,14 @@ def no_secrets(value):
     elif isinstance(value, list):
         for v in value:
             no_secrets(v)
+    elif isinstance(value, str):
+        import re
+
+        if re.search(
+            r"(?i)\b(password|access.token|refresh.token|api.key|client.secret)\s*[:=]\s*\S+|\b(?:sk-|ghp_)[A-Za-z0-9_-]{20,}",
+            value,
+        ):
+            raise ValueError("Credentials cannot be stored as reusable information")
 
 
 class Workspace:
@@ -158,6 +167,11 @@ class Workspace:
                     )
                 },
             }
+            if expired(item):
+                continue
+            item["requirement_sections"] = item.get(
+                "requirement_sections"
+            ) or requirement_sections(item.get("requirements", ""))
             # A previously filled application may not yet have an index binding.
             app = self._find_app(item)
             item["application_id"] = app["id"] if app else item["application_id"]
@@ -264,7 +278,7 @@ class Workspace:
                 ],
             }
             self.store.db.execute(
-                "INSERT OR IGNORE INTO application_history(application_id,snapshot,applied) VALUES(?,?,?)",
+                "INSERT INTO application_history(application_id,snapshot,applied) VALUES(?,?,?) ON CONFLICT(application_id) DO UPDATE SET snapshot=CASE WHEN application_history.snapshot='{}' THEN excluded.snapshot ELSE application_history.snapshot END,applied=COALESCE(application_history.applied,excluded.applied),outcome=CASE WHEN application_history.outcome='Application in progress' THEN 'Awaiting response' ELSE application_history.outcome END",
                 (app, encode(snapshot), when),
             )
             self.store.db.execute(
@@ -304,12 +318,71 @@ class Workspace:
                 "SELECT * FROM assessments WHERE application_id=? ORDER BY created",
                 (r["id"],),
             )
-            r["outcome"] = r["outcome"] or "Awaiting response"
+            r["outcome"] = r["outcome"] or (
+                "Awaiting response"
+                if r["state"].startswith("SUBMITTED_")
+                else "Application in progress"
+            )
             r["events"] = self.store.rows(
                 "SELECT kind,payload,created FROM history_events WHERE application_id=? ORDER BY id",
                 (r["id"],),
             )
         return rows
+
+    def remember_search(self, request, provider, job_id):
+        payload = {
+            k: request[k]
+            for k in (
+                "query",
+                "location",
+                "requested",
+                "filters",
+                "sources",
+                "include_builtin",
+                "original_prompt",
+            )
+            if k in request
+        }
+        no_secrets(payload)
+        if len(encode(payload)) > 20000:
+            raise ValueError("Search context is too large")
+        self.store.db.execute(
+            "INSERT INTO search_history VALUES(?,?,?,?,?)",
+            (uid(), job_id, provider, encode(payload), time.time()),
+        )
+
+    def search_history(self):
+        rows = self.store.rows(
+            "SELECT s.*,j.state,j.result FROM search_history s LEFT JOIN workspace_jobs j ON j.id=s.job_id ORDER BY s.created DESC LIMIT 100"
+        )
+        for row in rows:
+            row["payload"] = json.loads(row["payload"])
+            result = json.loads(row.pop("result") or "{}")
+            row["returned"] = result.get("returned")
+        # Preserve earlier searches created before this table existed.
+        first = self.store.one("SELECT MIN(created) AS t FROM search_history")["t"]
+        for row in self.store.rows(
+            "SELECT * FROM discovery_runs ORDER BY created DESC LIMIT 100"
+        ):
+            if first is None or row["created"] < first:
+                rows.append(
+                    {
+                        "id": row["id"],
+                        "provider": "legacy",
+                        "created": row["created"],
+                        "state": "DONE",
+                        "payload": {
+                            "query": row["query"],
+                            "location": row["location"],
+                            "requested": row["requested"],
+                        },
+                        "returned": self.store.one(
+                            "SELECT COUNT(*) AS n FROM discovery_results WHERE run_id=?",
+                            (row["id"],),
+                        )["n"],
+                    }
+                )
+        return sorted(rows, key=lambda r: r["created"], reverse=True)[:100]
 
     def assessment(self, app, component, deadline="", evidence=None):
         self.assert_app(app)
@@ -349,6 +422,44 @@ class Workspace:
         op = request["op"]
         if op == "workspace_profile":
             return self.profile()
+        if op == "workspace_search_history":
+            return self.search_history()
+        if op == "workspace_save_context":
+            content = str(request.get("content", "")).strip()
+            no_secrets(content)
+            if (
+                not content
+                or len(content) > 12000
+                or request.get("user_requested_save") is not True
+            ):
+                raise ValueError("Save only bounded context the user asked to retain")
+            import re
+
+            if re.search(
+                r"(?i)\b(password|access.token|refresh.token|api.key|client.secret)\s*[:=]",
+                content,
+            ):
+                raise ValueError("Credentials cannot be stored as context")
+            id = uid()
+            self.store.db.execute(
+                "INSERT INTO saved_context VALUES(?,?,?,?,?)",
+                (
+                    id,
+                    request.get("kind", "note"),
+                    content,
+                    "user-provided local context; not an instruction grant",
+                    time.time(),
+                ),
+            )
+            return {"id": id}
+        if op == "workspace_context":
+            query = str(request.get("query", "")).strip()
+            if not query:
+                raise ValueError("Specify which saved context is needed")
+            return self.store.rows(
+                "SELECT * FROM saved_context WHERE instr(lower(content),lower(?))>0 ORDER BY created DESC LIMIT 10",
+                (query,),
+            )
         if op == "workspace_select_profile":
             return self.select_profile(request["version"])
         if op == "workspace_save_profile":
@@ -395,6 +506,7 @@ class Workspace:
             self.assert_app(app)
             outcome = request["outcome"]
             if outcome not in {
+                "Application in progress",
                 "Awaiting response",
                 "Assessment stage",
                 "Interview",
@@ -416,7 +528,13 @@ class Workspace:
                     (app, "{}", outcome, str(request.get("notes", ""))[:20000]),
                 )
                 self.event(app, "history-user-update", {"outcome": outcome})
-            return {"updated": True}
+            return {
+                "updated": True,
+                "revision": self.store.one(
+                    "SELECT revision FROM application_history WHERE application_id=?",
+                    (app,),
+                )["revision"],
+            }
         if op == "workspace_portfolios":
             return [
                 {**r, "payload": json.loads(r["payload"])}

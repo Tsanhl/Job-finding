@@ -25,7 +25,20 @@ def resolve(field, profile, target):
         return ""
     if field.kind in {FieldKind.ELIGIBILITY, FieldKind.SPONSORSHIP}:
         country = ALIASES.get(target.country.casefold(), target.country.upper())
-        rights = profile.get("work_rights", {}).get(country, {}) if country else {}
+        records = profile.get("work_rights", {})
+        if isinstance(records, list):
+            matching = [
+                r
+                for r in records
+                if isinstance(r, dict) and r.get("country") == country
+            ]
+            rights = matching[0] if country and len(matching) == 1 else {}
+        else:
+            rights = (
+                records.get(country, {})
+                if country and isinstance(records, dict)
+                else {}
+            )
         key = (
             "authorized_to_work"
             if field.kind == FieldKind.ELIGIBILITY
