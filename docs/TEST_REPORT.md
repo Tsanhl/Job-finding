@@ -1,12 +1,12 @@
 # ApplyPilot local test report
 
-Recorded: 2026-09-12T13:38:33.048636+00:00
+Recorded: 2026-09-12T14:10:41.588386+00:00
 Python: 3.14.5; SQLite: 3.53.4
 
 Command: `.venv-upgrade/bin/python -m pytest -q -s --junitxml=output/upgrade-validation/results.xml`
 
 Exit code: 0
-Pytest summary: 165 passed, 6 subtests passed in 49.60s
+Pytest summary: 165 passed, 6 subtests passed in 33.04s
 JUnit counts: {'tests': 171, 'failures': 0, 'errors': 0, 'skipped': 0}
 
 ## Measured browser concurrency

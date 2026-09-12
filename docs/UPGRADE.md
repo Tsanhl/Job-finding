@@ -151,11 +151,22 @@ stops runtime mail access but does not claim provider-side revocation.
 
 UI bindings remain loopback with CORS/XSRF protection. Privileged backend commands are on a 0600 Unix socket. Pages/model output cannot select arbitrary files or issue backend commands. Browser/network traces and screenshots are not produced by application workers. Private field values are saved only in local profile/checkpoint/review records, not telemetry.
 
-## 繁體中文
+## Handover summary
 
-新版只有四個主要功能：找工作、LinkedIn Easy Apply、自動填表及開啟工作連結。首次使用先在本機確認可重用資料及履歷；找工作及開啟連結不受此限制。自動填表預設停在最後檢查頁，每份申請可另外授權提交。LinkedIn 只填到最後檢查頁，不會按 Submit。缺失資料集中顯示；你手動填寫後可直接繼續，不必逐項指出改了哪些欄位。你按「I submitted it」就立即完成並停止等待。
+The current release provides four primary functions: Find Jobs, LinkedIn Easy
+Apply, Autofill, and Open Job Links. First-time users confirm reusable profile
+facts and an approved CV locally. Find Jobs and Open Job Links remain available
+without this setup. Autofill stops at final review by default, while each target
+can receive separate submission authority. LinkedIn Easy Apply always stops at
+review. Missing facts are grouped, and manually edited forms resume without
+requiring the user to identify every changed field. Selecting “I submitted it”
+immediately ends active work for that application.
 
-原始個人資料、文件及舊虛擬環境保留。首次匯入須先預覽、處理衝突並確認；系統會先備份。真實郵箱、Keychain 存取及僱主提交仍須另外設定和授權。模擬測試成功不代表所有招聘網站都已實測。
+Existing private records, documents, and environments remain local. A first
+import requires preview, conflict resolution, confirmation, and a database
+backup. Real mailbox connections, Keychain access, and employer submissions
+still require their documented setup and authority. Synthetic acceptance does
+not establish compatibility with every live recruitment site.
 
 Detailed partial implementations and remaining acceptance work are listed in [ACCEPTANCE_LIMITS.md](ACCEPTANCE_LIMITS.md).
 
@@ -163,4 +174,10 @@ Detailed partial implementations and remaining acceptance work are listed in [AC
 
 See [portal contracts](PORTAL_CONTRACTS.md) for implemented AllHires/Apply4Law actions, record reconciliation and submission evidence. Gmail includes asynchronous connection status and explicit provider revocation. Autofill to final review does not require a Gmail connection.
 
-繁中：申請特定資料只會在表格要求時集中提問；Git 只保存空白定義，不保存候選人的答案。網站儲存／下一步及重複工作紀錄已有本機測試；真實網站是否相容仍須按該表格核實。Gmail 功能已寫好，但首次連接仍需你完成 Google 同意程序，普通填表不需要連接。私人資料不會隨程式碼上傳 GitHub。
+Application-specific facts are requested together only when a form requires
+them. Git stores blank question definitions and never candidate answers. Local
+tests cover Save and Continue actions and repeated work records; each live site
+still requires compatibility verification. Gmail support is implemented, but
+the user must complete Google consent for the first connection. Ordinary
+autofill does not require Gmail, and private records must never be pushed to
+GitHub.

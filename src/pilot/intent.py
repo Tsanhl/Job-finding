@@ -10,7 +10,7 @@ def propose(text, *, targets, profile_version, documents=()):
     words = text.casefold()
     negative_submit = bool(
         re.search(
-            r"(?:do not|don't|never|without|no)\s+(?:auto(?:matically)?\s+)?submit|不要提交|不提交",
+            r"(?:do not|don't|never|without|no)\s+(?:auto(?:matically)?\s+)?submit",
             words,
         )
     )
@@ -24,12 +24,12 @@ def propose(text, *, targets, profile_version, documents=()):
         raise ValueError("Split the selection into batches of at most ten")
     scope = (
         "CURRENT_PAGE"
-        if re.search(r"current page|this page only|目前頁面|當前頁面", words)
+        if re.search(r"current page|this page only", words)
         else "EXISTING_APPLICATION"
     )
     chosen = deepcopy(list(targets))
     submit = not negative_submit and bool(
-        re.search(r"submit automatically|automatically submit|自動提交", words)
+        re.search(r"submit automatically|automatically submit", words)
     )
     for target in chosen:
         target["scope"] = scope
@@ -47,7 +47,7 @@ def propose(text, *, targets, profile_version, documents=()):
         "documents": list(documents),
         "permissions": permissions,
         "workers": workers,
-        "preview": bool(re.search(r"preview|inspect only|預覽", words)),
+        "preview": bool(re.search(r"preview|inspect only", words)),
         "approval": "",
         "expires_at": 0,
     }
