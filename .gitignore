@@ -46,3 +46,8 @@ dashboard-url.txt
 
 # Encrypted private workspace recovery bundles
 *.apbundle
+
+# Per-user recovery keys are generated locally, never distributed.
+*.key
+recovery-keys/
+automatic-recovery/

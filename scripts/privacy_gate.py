@@ -35,7 +35,7 @@ CREDENTIAL = re.compile(
     rb"(?i)(?:api[_-]?key|client[_-]?secret|refresh[_-]?token|password)\s*[:=]\s*[\"']([A-Za-z0-9_./+\-=]{20,})[\"']"
 )
 TOKEN_PREFIX = re.compile(rb"(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})")
-PRIVATE_SUFFIXES = {".doc", ".docx", ".pdf", ".rtf", ".apbundle", ".sqlite", ".sqlite3", ".db"}
+PRIVATE_SUFFIXES = {".doc", ".docx", ".pdf", ".rtf", ".apbundle", ".key", ".sqlite", ".sqlite3", ".db"}
 
 
 def git(*args, input_data=None):

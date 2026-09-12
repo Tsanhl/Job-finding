@@ -2,6 +2,18 @@
 
 A SQLite backup alone does not contain registered document bytes or the native Keychain key needed to decrypt mail evidence. The new encrypted workspace bundle contains all three. The existing database-only backup/restore commands remain available for their narrower purpose.
 
+## Automatic setup for each local user
+
+On first launch, the foreground runtime creates a unique random recovery key for that workspace under `recovery-keys/automatic.key` in its private Application Support directory. The repository contains only the generator, never a shared key or a user's backups. Key files have owner-only permissions and are never returned by the dashboard API or copied to an additional backup folder. Existing manual backup/key pairs are unchanged; automatic backups use their own key. A restored workspace starts a fresh automatic-backup history and key on its first launch; keep the source bundle/key pair for access to the older backups.
+
+An initial encrypted snapshot is created and verified automatically. Subsequent snapshots are due every 24 hours while the runtime is running and the computer is awake, with a single catch-up after sleep. This installs no operating-system startup service. SQLite's consistent backup API runs on a separate connection; registered document bytes must match the captured database hashes. The existing CLI backup remains offline by default.
+
+Settings → Automatic recovery shows the last verified backup, next due time, key-file location and local backup folder. Users can disable scheduling, run Back up now, and choose an existing additional backup folder on an external drive or in their backup service. Additional copies contain only the encrypted bundle, never the key. A verified copy means the bytes match; the application cannot prove the folder is physically off-device or that a cloud service uploaded it. Users must keep the key separately and arrange that independent copy. A local backup and local key alone do not protect against losing the computer.
+
+The latest seven automatically created local bundles are kept. Retention runs only after a replacement bundle is verified and never removes manual bundles. Additional copies are not automatically pruned; manage their retention at the destination. Backup failures preserve previous snapshots and retry with bounded backoff. An unavailable additional folder is not recreated: the local bundle is kept, Settings flags the failed copy, and the next daily run or Back up now retries it. Missing, corrupt or insecurely permissioned keys require owner action; the application never silently generates a replacement for an established workspace.
+
+To restore an automatic `.apbundle`, use the restore command below and enter the value from that workspace's `automatic.key` at the private terminal prompt. Save the key in a separate password manager or another secure location before you need recovery. Do not paste it into Codex, publish it or commit it to Git.
+
 ## Create a complete backup
 
 Stop the foreground ApplyPilot launcher first. The backup command acquires the same runtime lock and refuses to run against an active runtime.

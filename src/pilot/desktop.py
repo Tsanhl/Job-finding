@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import fcntl
 import hashlib
+import os
+import tempfile
 import secrets
 import webbrowser
 from pathlib import Path
@@ -81,9 +83,19 @@ async def serve_workspace(home, port, cdp, open_browser):
     # Token is a URL fragment, never a query parameter or HTTP access-log entry.
     url = f"http://127.0.0.1:{port}/#token={token}"
     private_link = home / "dashboard-url.txt"
-    with private_link.open("w") as out:
-        private_link.chmod(0o600)
-        out.write(url)
+    # Readers must never observe an empty or partially written unlock link.
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=home, prefix=".dashboard-link-", delete=False
+    ) as out:
+        temporary_link = Path(out.name)
+        try:
+            os.fchmod(out.fileno(), 0o600)
+            out.write(url)
+            out.flush()
+            os.fsync(out.fileno())
+            temporary_link.replace(private_link)
+        finally:
+            temporary_link.unlink(missing_ok=True)
 
     async def open_when_ready():
         import httpx

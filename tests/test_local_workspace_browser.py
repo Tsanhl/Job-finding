@@ -108,9 +108,14 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                         break
                     except Exception:
                         await asyncio.sleep(0.1)
-                await page.get_by_role(
-                    "heading", name="Discover jobs", exact=True
-                ).wait_for()
+                try:
+                    await page.get_by_role(
+                        "heading", name="Discover jobs", exact=True
+                    ).wait_for(timeout=10000)
+                except Exception:
+                    raise AssertionError(
+                        await page.locator("body").inner_text(timeout=2000)
+                    ) from None
                 assert (
                     await page.get_by_role(
                         "button", name="Email alerts", exact=True
@@ -254,6 +259,23 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     "heading", name="Gmail assessment tracking"
                 ).wait_for()
                 assert "once every 24 hours" in await page.locator("main").inner_text()
+                await page.get_by_role(
+                    "heading", name="Automatic recovery", exact=True
+                ).wait_for()
+                for _ in range(100):
+                    recovery = await asyncio.to_thread(
+                        client, {"op": "workspace_recovery_status"}, home
+                    )
+                    if recovery["last_success"]:
+                        break
+                    await asyncio.sleep(0.05)
+                assert recovery["enabled"] and recovery["last_success"]
+                assert recovery["off_device_protection"] == "NOT_VERIFIED"
+                assert (
+                    home / "backups" / "automatic-recovery" / recovery["latest_bundle"]
+                ).is_file()
+                key = (home / "recovery-keys" / "automatic.key").read_text().strip()
+                assert key not in await page.locator("main").inner_text()
                 output = Path("output/unified-validation")
                 output.mkdir(parents=True, exist_ok=True)
                 await page.screenshot(

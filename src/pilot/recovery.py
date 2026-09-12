@@ -4,7 +4,7 @@ Includes registered documents and the evidence decryption key, never browser
 sessions, passwords or OAuth credentials. No passphrase appears in CLI arguments.
 """
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import base64
 import fcntl
 import hashlib
@@ -62,7 +62,7 @@ def _validate_db(db):
         raise ValueError("Recovery database integrity failed")
 
 
-def backup_workspace(home, destination, passphrase, *, backend=None):
+def backup_workspace(home, destination, passphrase, *, backend=None, online=False):
     home = Path(home).expanduser().resolve(strict=True)
     destination = Path(destination).expanduser().resolve()
     _outside_repository(destination)
@@ -72,7 +72,7 @@ def backup_workspace(home, destination, passphrase, *, backend=None):
     cipher = _cipher(passphrase, salt)
     backend = backend or NativeSecrets()
     with (
-        _offline(home),
+        nullcontext() if online else _offline(home),
         tempfile.TemporaryDirectory(prefix=".recovery-", dir=home) as scratch,
     ):
         snapshot = Path(scratch) / "database.sqlite3"
@@ -272,6 +272,11 @@ def restore_workspace(bundle, home, passphrase, *, backend=None):
                     )
                     store.db.execute("UPDATE grants SET revoked=1")
                     store.db.execute("DELETE FROM sessions")
+                    # This is a new workspace: source backup files/key are not relocated.
+                    # Generate a fresh automatic-backup key on its first launch.
+                    store.db.execute(
+                        "DELETE FROM workspace_settings WHERE key='automatic_recovery'"
+                    )
                     store.db.execute(
                         "UPDATE mail_connections SET status='RECONNECT' WHERE status='CONNECTED'"
                     )
@@ -297,4 +302,63 @@ def restore_workspace(bundle, home, passphrase, *, backend=None):
         "documents": len(docs),
         "requires_reconnect": True,
         "runs_paused": True,
+    }
+
+
+def verify_bundle(bundle, passphrase):
+    """Read-only verification, with no Keychain writes or restored workspace."""
+    bundle = Path(bundle)
+    if bundle.stat().st_size > MAX_BYTES * 2:
+        raise ValueError("Recovery file exceeds size limit")
+    raw = bundle.read_bytes()
+    if not raw.startswith(MAGIC):
+        raise ValueError("Invalid recovery bundle")
+    salt = raw[len(MAGIC) : len(MAGIC) + 16]
+    plaintext = _cipher(passphrase, salt).decrypt(raw[len(MAGIC) + 16 :])
+    with zipfile.ZipFile(io.BytesIO(plaintext)) as archive:
+        if (
+            len(archive.namelist()) != len(set(archive.namelist()))
+            or sum(x.file_size for x in archive.infolist()) > MAX_BYTES + 1024 * 1024
+        ):
+            raise ValueError("Invalid recovery archive")
+        manifest = json.loads(archive.read("manifest.json"))
+        data = archive.read("database.sqlite3")
+        if (
+            manifest["version"] != 1
+            or hashlib.sha256(data).hexdigest() != manifest["database_sha256"]
+        ):
+            raise ValueError("Recovery manifest mismatch")
+        with tempfile.TemporaryDirectory(prefix=".verify-", dir=bundle.parent) as temp:
+            path = Path(temp) / "database.sqlite3"
+            path.write_bytes(data)
+            path.chmod(0o600)
+            db = apsw.Connection(str(path), flags=apsw.SQLITE_OPEN_READONLY)
+            try:
+                _validate_db(db)
+                docs = {
+                    r[0]: (r[1], r[2])
+                    for r in db.execute("SELECT id,sha256,size FROM documents")
+                }
+                if len(manifest["documents"]) != len(docs) or {
+                    r["id"] for r in manifest["documents"]
+                } != set(docs):
+                    raise ValueError("Recovery documents missing")
+                for document in manifest["documents"]:
+                    payload = archive.read(document["file"])
+                    if (hashlib.sha256(payload).hexdigest(), len(payload)) != docs[
+                        document["id"]
+                    ]:
+                        raise ValueError("Recovery document verification failed")
+                for (protected,) in db.execute(
+                    "SELECT protected_payload FROM recruitment_messages"
+                ):
+                    Fernet(manifest["evidence_key"].encode()).decrypt(
+                        protected.encode()
+                    )
+            finally:
+                db.close()
+    return {
+        "verified": True,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "documents": len(docs),
     }

@@ -146,3 +146,5 @@ Captures, fingerprints, URL and the latest answer are held only in process memor
 - Enable the mandatory local pre-push gate once with `.venv-upgrade/bin/python scripts/install_hooks.py`; run it directly with `make privacy`.
 
 Complete encrypted backups, including documents and mail-evidence recovery, are described in [the recovery guide](docs/RECOVERY.md).
+
+Each local workspace automatically generates its own private recovery key and daily encrypted backups while the service runs. Configure an independent backup destination and keep the key separately in Settings; nothing private is uploaded to GitHub.

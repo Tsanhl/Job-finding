@@ -81,6 +81,9 @@ PUBLIC_COMMANDS = {
     "workspace_import_preview",
     "workspace_import_jobsignal",
     "workspace_revision",
+    "workspace_recovery_status",
+    "workspace_recovery_configure",
+    "workspace_recovery_now",
 }
 
 

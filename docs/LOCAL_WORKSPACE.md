@@ -23,7 +23,7 @@ The launcher starts the existing singleton runtime if necessary. A stale running
 | Autofill within Applied History | Ask Codex through the local tools to start filling. Track progress, grouped gaps, pause/resume/stop and manual edits alongside application records. Optional dashboard start controls are collapsed here. Each target defaults to review; submission still requires target authority and adapter qualification. |
 | Applied History | Manual entry, I applied, persistent application snapshots, notes, recruitment stages, separate assessment components and immediate user-reported completion. |
 
-| Settings | Gmail connection, daily tracking, import preview and consistent backups. No outgoing Email alerts page. |
+| Settings | Gmail connection, daily tracking, import preview, automatic encrypted recovery and manual database backups. No outgoing Email alerts page. |
 
 **Newly opened** means an explicitly published application opening date within the last seven days. A posting date is not an opening date. **Link opened** records a user opening a job card. **Applied** requires user-reported or confirmed submission. Unsave, listing expiry and new assessment messages cannot erase or restart an application.
 
@@ -98,3 +98,7 @@ Migration 007 adds a saved-opportunity index, stable assessment-key mappings, ma
 Gmail commits one provider page per continuation. Outstanding pages and the final initial-history catch-up are due after 30 seconds while enabled. The UI separates the last processed page from the last fully caught-up check. Transient failures retry after 60 seconds with exponential backoff capped at one hour; authentication failures require checking/reconnecting the account. An expired history cursor schedules bounded lookback reconciliation. Daily polling resumes only when caught up.
 
 Assessment reminders preserve completed states and attach their own deadline wording. Conflicting wording is flagged instead of silently changing an agreed deadline. The manual assessment form accepts a distinct test/round ID. Differently worded labels are not semantically merged automatically.
+
+## Automatic recovery
+
+The local runtime initializes a unique private recovery key and verified encrypted backup for each workspace, then runs daily while awake and running. Settings provides status, disable/enable, Back up now and an optional additional backup folder. Seven verified automatic local bundles are retained. The repository distributes no key material, personal records or backup files. Existing manual backup/key pairs remain unchanged. Missing keys are never silently replaced. See [RECOVERY.md](RECOVERY.md) for off-device copies, key custody, retention and restoration.

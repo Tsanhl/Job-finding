@@ -42,6 +42,9 @@ class Runtime:
         from .tracking import MailTracking
 
         self.tracking = MailTracking(store, self.workspace)
+        from .auto_recovery import AutoRecovery
+
+        self.recovery = AutoRecovery(store)
         self.testing = testing
         self.owner = uid()
         self.documents = Documents(store)
@@ -552,6 +555,14 @@ class Runtime:
 
     async def command(self, request):
         op = request.get("op")
+        if op == "workspace_recovery_status":
+            return self.recovery.status()
+        if op == "workspace_recovery_configure":
+            return self.recovery.configure(request)
+        if op == "workspace_recovery_now":
+            return self.background_job(
+                "recovery", lambda: self.recovery.tick(force=True)
+            )
         if op == "capabilities":
             return {
                 "protocol": 2,
@@ -571,6 +582,9 @@ class Runtime:
                     "SELECT MAX(last_success) AS revision FROM mail_tracking"
                 )["revision"],
                 "expiry_clock": int(time.time() // 60),
+                "recovery": self.store.one(
+                    "SELECT MAX(updated) AS t FROM workspace_settings WHERE key='automatic_recovery'"
+                )["t"],
                 "discovery": self.store.one(
                     "SELECT MAX(updated) AS revision FROM workspace_jobs"
                 )["revision"],
@@ -1261,6 +1275,7 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
         os.chmod(socket, 0o600)
         pump = asyncio.create_task(runtime.pump())
         tracking = asyncio.create_task(runtime.tracking.run())
+        recovery = asyncio.create_task(runtime.recovery.run())
         print(
             "ApplyPilot foreground runtime ready. Ctrl-C stops scheduling; browser owner remains open.",
             flush=True,
@@ -1272,6 +1287,7 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
             runtime.closed = True
             pump.cancel()
             tracking.cancel()
+            recovery.cancel()
             for worker in list(runtime.active.values()):
                 worker.cancel()
             for task in list(runtime.background.values()):
@@ -1279,6 +1295,7 @@ async def serve(home=None, cdp="http://127.0.0.1:9333"):
             await asyncio.gather(
                 pump,
                 tracking,
+                recovery,
                 *runtime.active.values(),
                 *runtime.background.values(),
                 return_exceptions=True,

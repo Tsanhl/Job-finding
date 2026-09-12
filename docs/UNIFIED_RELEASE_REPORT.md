@@ -5,7 +5,7 @@ Validated on 12 September 2026 using the existing `.venv-upgrade` environment.
 | Check | Actual result |
 |---|---|
 | Preserved ApplyPilot baseline | 170 tests passed, six subtests passed before editing |
-| Final local synthetic CI | 244 tests passed, six subtests passed; see the latest test report for timings |
+| Final local synthetic CI | 253 tests passed, six subtests passed; see the latest test report for timings |
 | Browser concurrency | Measured overlap of 1, 2, 5 and 10 for the corresponding requested workers |
 | Merged UI | Real Chromium exercised profile save, preserved nested/custom facts, application reporting, assessment completion, reload and daily Gmail settings |
 | JobSignal adapters | Original synthetic collector/programme fixtures ported and passing |
@@ -51,3 +51,9 @@ Real Chromium verifies desktop/mobile layout, search reuse, profile autosave, re
 Validated against the complete local suite: 244 tests and six subtests passed. Saved-job regression data contains 1,205 opportunities, including 205 older saved jobs; keyset pagination preserves their visibility. Reminder evidence deduplicates against an application-scoped assessment identity while preserving completed states, distinct rounds and historical ambiguity. Gmail tests cover multi-page continuation across tracker restart, final history catch-up, transient retry and expired cursors.
 
 Complete encrypted recovery restores a separate synthetic workspace with approved documents, a new evidence-key mapping, decryptable messages and unchanged uncertain submission attempts/checkpoints. Runs pause, grants revoke and accounts require reconnection. Wrong passwords, modified bundles, missing documents/keys, active-runtime locks and existing destinations are rejected. Existing local profile/document/application rows matched the pre-change database backup after migration 007; Gmail remains disconnected. No native Keychain export/import, mailbox access, employer interaction or live restoration was performed. See [RECOVERY.md](RECOVERY.md).
+
+## Automatic per-workspace recovery
+
+The final suite passed 253 tests and six subtests. Tests cover independent locally generated keys, owner-only permissions, restart preservation, verified online snapshots, daily/sleep cadence, disabled scheduling, additional-copy verification without key export, local retention, missing keys, failure preservation, graceful shutdown and fresh keys after restoration. The actual Chromium launcher verifies first-run automatic backup and Settings without displaying key contents. An exposed unlock-link creation race was fixed by atomically publishing the complete link.
+
+The existing local workspace generated and verified its first automatic encrypted backup. Its previous manual bundle/key pair remains present. No additional destination was configured, so off-device disaster protection remains unverified. No user key or backup is part of Git; the implementation creates them only in private local storage. Native Keychain/mailbox acceptance remains outside this validation.
