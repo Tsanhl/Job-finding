@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
-"""Re-open needs_review jobs and finish Easy Apply (Next→fill→Submit) or external ATS."""
+"""Re-open attention items and advance them only to a safe manual-review state."""
 
 from __future__ import annotations
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
 
 import json
 import sys
@@ -45,7 +54,7 @@ def main() -> None:
             i += 1
 
     results = []
-    print(f"Finishing {len(queue)} jobs with fixed Easy Apply (Next → fill → Submit)…", flush=True)
+    print(f"Preparing {len(queue)} jobs for manual review (no automated submission)…", flush=True)
     print("External signup walls → PING (wait 90s then skip unless you sign in).", flush=True)
 
     with sync_playwright() as p:
@@ -53,7 +62,6 @@ def main() -> None:
             user_data_dir=cfg["browser_data_dir"],
             headless=False,
             viewport={"width": 1400, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
             slow_mo=50,
         )
         page = context.pages[0] if context.pages else context.new_page()
@@ -96,7 +104,7 @@ def main() -> None:
                 )
 
                 # Signup: pause briefly for user
-                if result.status == "needs_signup":
+                if result.status == "needs-authentication":
                     print(f"  *** PING: SIGNUP/LOGIN REQUIRED ***", flush=True)
                     print(f"  {result.detail}", flush=True)
                     print("  Waiting 90s for you to sign in (or say skip)…", flush=True)
@@ -111,7 +119,7 @@ def main() -> None:
                         dry_run=False,
                         log=lambda m: print(f"  retry: {m}", flush=True),
                     )
-                    if result.status == "needs_signup":
+                    if result.status == "needs-authentication":
                         print("  Still needs signup — skipping this job", flush=True)
                         skip.add(url)
 
@@ -125,7 +133,7 @@ def main() -> None:
                         "detail": result.detail,
                     }
                 )
-                if result.status in {"applied", "needs_signup"}:
+                if result.status in {"review-ready", "needs-authentication"}:
                     skip.add(url)
 
                 # Close extra tabs
@@ -143,16 +151,28 @@ def main() -> None:
         save_applied_urls(history_path, skip)
         out = Path(cfg["output_dir"]) / f"needs_review_finish_{time.strftime('%Y%m%d_%H%M%S')}.json"
         out.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        remaining = [r for r in results if r.get("status") in {"needs_review", "needs_signup", "error"}]
+        remaining = [
+            r
+            for r in results
+            if r.get("status")
+            in {
+                "needs-information",
+                "needs-authentication",
+                "policy-blocked",
+                "unsupported",
+                "failed-retryable",
+                "submission-unconfirmed",
+            }
+        ]
         queue_path.write_text(json.dumps(remaining, indent=2), encoding="utf-8")
         cleanup_run_logs(cfg["output_dir"], keep=5)
 
-        applied = sum(1 for r in results if r.get("status") == "applied")
+        applied = sum(1 for r in results if r.get("status") == "submitted-confirmed")
         print("\n=== FINISH PASS DONE ===", flush=True)
         print(
             f"Applied: {applied} | "
-            f"Signup: {sum(1 for r in results if r.get('status')=='needs_signup')} | "
-            f"Still manual: {sum(1 for r in results if r.get('status')=='needs_review')}",
+            f"Signup: {sum(1 for r in results if r.get('status')=='needs-authentication')} | "
+            f"Ready for review: {sum(1 for r in results if r.get('status')=='review-ready')}",
             flush=True,
         )
         print(f"Saved: {out}", flush=True)

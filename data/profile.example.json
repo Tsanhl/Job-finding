@@ -73,6 +73,15 @@
     "languages": "",
     "salary_expectation": "",
     "salary_range": "",
-    "start_date": ""
+    "start_date": "",
+    "previously_worked_for_employer_default": "",
+    "valid_identity_document_by_start": "",
+    "ever_dismissed": "",
+    "formal_disciplinary_investigation": "",
+    "non_discharged_bankruptcy_iva_trust_deed": "",
+    "ccj_or_defaults_over_10000": "",
+    "four_or_more_judgment_debts": "",
+    "continuing_external_business_interests": "",
+    "household_earner_occupation_at_14": ""
   }
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +13,19 @@ from .urlutil import normalize_job_url
 
 ACTIVE_OR_COMPLETE_STATUSES = {
     "review_ready",
+    "review-ready",
     "submitted",
+    "submitted-confirmed",
     "completed_manually",
+    "submitted-user-reported",
     "rejected",
+    "employer-rejected",
+    "submission-unconfirmed",
 }
+
+
+class LedgerCorruptionError(RuntimeError):
+    """Raised when duplicate-sensitive history cannot be trusted."""
 
 
 class ApplicationLedger:
@@ -29,11 +38,19 @@ class ApplicationLedger:
             return {}
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-        records = raw.get("applications", raw) if isinstance(raw, dict) else {}
+        except Exception as exc:
+            raise LedgerCorruptionError(
+                f"Application ledger is unreadable: {self.path}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise LedgerCorruptionError("Application ledger root must be an object")
+        records = raw.get("applications", raw)
         if not isinstance(records, dict):
-            return {}
+            raise LedgerCorruptionError(
+                f"Application ledger has an unsupported structure: {self.path}"
+            )
+        if any(not url or not isinstance(record, dict) for url, record in records.items()):
+            raise LedgerCorruptionError("Application ledger contains malformed records")
         return {
             normalize_job_url(url): dict(record)
             for url, record in records.items()
@@ -54,7 +71,6 @@ class ApplicationLedger:
             return self._load_unlocked()
 
     def skip_urls(self) -> set[str]:
-        now = datetime.now(timezone.utc)
         skipped: set[str] = set()
         for url, record in self.records().items():
             status = record.get("status")
@@ -63,15 +79,17 @@ class ApplicationLedger:
                 continue
             if status != "in_progress":
                 continue
-            try:
-                updated = datetime.fromisoformat(str(record.get("updated_at") or ""))
-            except ValueError:
-                continue
-            if updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc)
-            if now - updated < timedelta(hours=2):
-                skipped.add(url)
+            # A lease expiring does not prove that an external side effect did not
+            # occur. Keep it blocked until a user or receipt reconciles it.
+            skipped.add(url)
         return skipped
+
+    def reconciliation_urls(self) -> set[str]:
+        return {
+            url
+            for url, record in self.records().items()
+            if record.get("status") in {"in_progress", "submission-unconfirmed"}
+        }
 
     def record(
         self,

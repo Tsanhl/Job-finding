@@ -3,6 +3,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import sys
 from pathlib import Path
 
@@ -35,7 +44,7 @@ def main() -> None:
     print("ApplyPilot — London/UK (Easy Apply + external Apply links)", flush=True)
     print("NOTE: Cursor's panel browser cannot be automated.", flush=True)
     print("      Use the Chromium window this script opens (login once).", flush=True)
-    print("LIVE" if not dry_run else "DRY-RUN", "mode", flush=True)
+    print("ASSISTED-REVIEW" if not dry_run else "LOCAL-PREVIEW", "mode", flush=True)
     print("=" * 60, flush=True)
 
     with sync_playwright() as p:
@@ -43,7 +52,6 @@ def main() -> None:
             user_data_dir=cfg["browser_data_dir"],
             headless=False,
             viewport={"width": 1400, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
             slow_mo=40,
         )
         page = context.pages[0] if context.pages else context.new_page()
@@ -98,13 +106,17 @@ def main() -> None:
             )
             for r in summary.results:
                 all_results.append(r)
-                if r.url and r.status in {"applied", "needs_signup", "skipped"}:
+                if r.url and r.status in {
+                    "review-ready",
+                    "needs-authentication",
+                    "skipped-unsuitable",
+                }:
                     skip.add(normalize_job_url(r.url))
 
-        applied_n = sum(1 for r in all_results if r.status == "applied")
-        review_n = sum(1 for r in all_results if r.status == "needs_review")
-        signup_n = sum(1 for r in all_results if r.status == "needs_signup")
-        skipped_n = sum(1 for r in all_results if r.status == "skipped")
+        applied_n = sum(1 for r in all_results if r.status == "submitted-confirmed")
+        review_n = sum(1 for r in all_results if r.status == "review-ready")
+        signup_n = sum(1 for r in all_results if r.status == "needs-authentication")
+        skipped_n = sum(1 for r in all_results if r.status == "skipped-unsuitable")
         print("\n=== BATCH DONE ===", flush=True)
         print(
             f"Applied: {applied_n} | Needs review: {review_n} | "

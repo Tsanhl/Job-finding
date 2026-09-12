@@ -10,6 +10,7 @@ create_*_cover_letter.py
 # file is the deliberately blank example profile.
 data/*
 !data/profile.example.json
+!data/preset_questions.json
 application_profile.json
 *_application_draft.md
 *_supporting_answers.md
@@ -26,3 +27,6 @@ __pycache__/
 venv/
 .DS_Store
 .streamlit/secrets.toml
+
+.venv-upgrade/
+.runtime-test/

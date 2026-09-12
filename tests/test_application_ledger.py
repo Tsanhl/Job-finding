@@ -4,10 +4,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.application_ledger import ApplicationLedger
+from src.application_ledger import ApplicationLedger, LedgerCorruptionError
 
 
 class ApplicationLedgerTests(unittest.TestCase):
+    def test_corrupt_history_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            path.write_text("{not valid json", encoding="utf-8")
+            ledger = ApplicationLedger(path)
+            with self.assertRaises(LedgerCorruptionError):
+                ledger.skip_urls()
+
+    def test_in_progress_work_never_expires_into_an_automatic_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = ApplicationLedger(Path(directory) / "ledger.json")
+            url = "https://jobs.example.test/pending"
+            ledger.record(url, status="in_progress")
+            self.assertIn(url, ledger.skip_urls())
+            self.assertIn(url, ledger.reconciliation_urls())
+
     def test_review_ready_and_manual_completion_are_deduplicated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             ledger = ApplicationLedger(Path(directory) / "ledger.json")

@@ -3,6 +3,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import sys
 import time
 from pathlib import Path
@@ -164,10 +173,10 @@ def main() -> None:
                         "location": location,
                     }
                 )
-                if result.status == "applied":
+                if result.status == "review-ready":
                     skip.add(href)
                     easy_done += 1
-                elif result.status == "needs_info":
+                elif result.status == "needs-information":
                     print(
                         "\n*** PING: NEED YOUR INPUT — modal left open ***\n"
                         f"{result.detail}\n"
@@ -200,7 +209,7 @@ def main() -> None:
     append_needs_review_queue(cfg["output_dir"], results)
     print(f"\n=== DONE Easy Apply: {easy_done}/{easy_target} ===", flush=True)
     for r in results:
-        if r.get("status") == "applied":
+        if r.get("status") == "review-ready":
             print(f"  ✓ {r.get('title')} @ {r.get('company')}", flush=True)
     print("Chromium STAYS OPEN. Say 'finish all tasks' to close.", flush=True)
 

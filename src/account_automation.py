@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import secrets
 import string
-import subprocess
 import sys
 import threading
 import time
@@ -78,43 +77,12 @@ class PortalCredentialManager:
         return "".join(required)
 
     def _save_keychain(self, key: str, password: str) -> None:
-        service = f"ApplyPilot:{key}"
-        subprocess.run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-a",
-                self.email,
-                "-s",
-                service,
-                "-w",
-                password,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        from .pilot.secrets import NativeSecrets
+        NativeSecrets().put(f"ApplyPilot:{key}", self.email, password)
 
     def _load_keychain(self, key: str) -> str:
-        service = f"ApplyPilot:{key}"
-        result = subprocess.run(
-            [
-                "security",
-                "find-generic-password",
-                "-a",
-                self.email,
-                "-s",
-                service,
-                "-w",
-            ],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        return result.stdout.rstrip("\n") if result.returncode == 0 else ""
+        from .pilot.secrets import NativeSecrets
+        return NativeSecrets()._read(f"ApplyPilot:{key}", self.email) or ""
 
     def for_portal(self, company: str, portal_url: str) -> PortalCredentials:
         key = self._key(company, portal_url)

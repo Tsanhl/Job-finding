@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "policy": "Question definitions are public repository data. Candidate answers belong only in ignored local profile versions.",
+  "questions": [
+    {
+      "id": "previously_worked_for_employer",
+      "match_terms": ["previously worked for this organisation"],
+      "prompt": "Have you previously worked for this employer?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.previously_worked_for_employer_default",
+      "reuse": "default_with_employer_override",
+      "review_reason": "The local default is No unless the candidate records a Yes override for the named employer."
+    },
+    {
+      "id": "work_rights_entire_programme_without_visa_or_sponsorship",
+      "match_terms": ["legal right to work", "duration of the programme", "without requiring a visa or sponsorship"],
+      "prompt": "Do you have the legal right to work for the full programme and later substantive role without requiring a visa or sponsorship?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "review_reason": "The answer depends on country, start date, programme duration, immigration permission and employer wording."
+    },
+    {
+      "id": "valid_identity_document_by_start",
+      "match_terms": ["valid and in date passport or national identity card", "commence your employment"],
+      "prompt": "Will you hold a valid passport or national identity card by the employment start date?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.valid_identity_document_by_start",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "ever_dismissed",
+      "match_terms": ["ever been dismissed", "previous employer"],
+      "prompt": "Have you ever been dismissed by an employer?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.ever_dismissed",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "formal_disciplinary_investigation",
+      "match_terms": ["formal disciplinary investigation"],
+      "prompt": "Have you been, or are you currently, the subject of a formal disciplinary investigation?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.formal_disciplinary_investigation",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "non_discharged_bankruptcy_iva_trust_deed",
+      "match_terms": ["non-discharged bankruptcy", "individual voluntary arrangement"],
+      "prompt": "Do you have a non-discharged bankruptcy, IVA, or Scottish trust deed?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.non_discharged_bankruptcy_iva_trust_deed",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "ccj_or_defaults_over_10000",
+      "match_terms": ["county court judgements", "defaults totalling over £10k"],
+      "prompt": "Do you have CCJs or defaults totalling over £10,000?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.ccj_or_defaults_over_10000",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "four_or_more_judgment_debts",
+      "match_terms": ["four or more county court judgements or judgment debts"],
+      "prompt": "Do you have four or more CCJs or judgment debts?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.four_or_more_judgment_debts",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "continuing_external_business_interests",
+      "match_terms": ["external/outside business interests", "continue after you start working"],
+      "prompt": "Will any outside business interest or other role continue after you start this employment?",
+      "answer_type": "yes_no",
+      "profile_path": "answers.continuing_external_business_interests",
+      "reuse": "reusable_until_changed"
+    },
+    {
+      "id": "pre_employment_vetting_consent",
+      "match_terms": ["pre-employment vetting checks", "happy to continue"],
+      "prompt": "Do you agree to continue with the employer's stated pre-employment vetting checks?",
+      "answer_type": "yes_no",
+      "profile_path": "",
+      "reuse": "application_specific",
+      "review_reason": "This is consent to the named employer's notice and must be confirmed for that application."
+    },
+    {
+      "id": "household_earner_occupation_at_14",
+      "match_terms": ["occupation of your main household earner", "aged about 14"],
+      "prompt": "What was the occupation category of your main household earner when you were about 14?",
+      "answer_type": "household_occupation",
+      "profile_path": "answers.household_earner_occupation_at_14",
+      "reuse": "reusable_after_confirmation",
+      "choices": [
+        "Modern professional and traditional professional occupations such as teacher, nurse, physiotherapist, social worker, musician, police officer (sergeant or above), software designer, accountant, solicitor, medical practitioner, scientist, civil engineer or mechanical engineer",
+        "Senior, middle or junior managers or administrators such as finance manager, chief executive, large business owner, office manager, retail manager, bank manager, restaurant manager, warehouse manager",
+        "Clerical and intermediate occupations such as secretary, personal assistant, call centre agent, clerical worker, nursery nurse",
+        "Technical and craft occupations such as motor mechanic, plumber, printer, electrician, gardener, train driver",
+        "Routine, semi-routine manual and service occupations such as postal worker, machine operative, security guard, caretaker, farm worker, catering assistant, sales assistant, HGV driver, cleaner, porter, packer, labourer, waiter or waitress, bar staff",
+        "Long-term unemployed (claimed Jobseeker’s Allowance or earlier unemployment benefit for more than a year)",
+        "Small business owners who employed fewer than 20 people such as corner shop owners, small plumbing companies, retail shop owner, single restaurant or cafe owner, taxi owner, garage owner",
+        "Other such as retired, this question does not apply to me, I don’t know",
+        "Do not wish to disclose"
+      ]
+    }
+  ]
+}

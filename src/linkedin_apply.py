@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -12,10 +12,25 @@ from urllib.parse import urlencode
 from playwright.sync_api import Page
 
 from .answers import answer_question
+from .application_models import (
+    AiPolicy,
+    FieldEvidence,
+    OutcomeStatus,
+    RunMode,
+)
 from .cover_letter import generate_cover_letter
+from .field_manifest import (
+    CONTROL_SELECTOR,
+    FieldKind,
+    ManifestField,
+    answer_limit_blocker,
+    exact_option,
+    extract_field_manifest,
+    resolve_deterministic_answer,
+)
 from .profile import load_profile
 from .submission_guard import (
-    ai_rewrite_required,
+    ai_policy_prohibited,
     attestation_blockers,
     verify_application_ready,
 )
@@ -30,8 +45,38 @@ class ApplyResult:
     title: str
     company: str
     url: str
-    status: str
+    status: OutcomeStatus | str
     detail: str = ""
+    blockers: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
+    field_evidence: tuple[FieldEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.status = OutcomeStatus.parse(self.status)
+        self.blockers = tuple(dict.fromkeys(self.blockers))
+        self.actions = tuple(self.actions)
+        self.field_evidence = tuple(self.field_evidence)
+
+    @property
+    def legacy_status(self) -> str | None:
+        from .application_models import FillOutcome
+
+        return FillOutcome(self.status).legacy_status
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "title": self.title,
+            "company": self.company,
+            "url": self.url,
+            "status": self.status.value,
+            "detail": self.detail,
+            "blockers": list(self.blockers),
+            "actions": list(self.actions),
+            "field_evidence": [item.to_dict() for item in self.field_evidence],
+        }
+        if self.legacy_status:
+            data["legacy_status"] = self.legacy_status
+        return data
 
 
 @dataclass
@@ -44,7 +89,7 @@ class RunSummary:
         return {
             "searched_keywords": self.searched_keywords,
             "location": self.location,
-            "results": [asdict(r) for r in self.results],
+            "results": [r.to_dict() for r in self.results],
             "timestamp": datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -131,6 +176,18 @@ APPLY_BUTTON_SELECTORS = (
     "button:has-text('Apply')",
 )
 
+EASY_APPLY_ROOT_SELECTOR = (
+    ".jobs-easy-apply-modal, .jobs-easy-apply-content, "
+    "div[aria-labelledby*='jobs-apply']"
+)
+
+LINKEDIN_PROGRESS_LABELS = (
+    "Review your application",
+    "Review",
+    "Continue to next step",
+    "Next",
+)
+
 
 def _log(msg: str, log: LogFn | None) -> None:
     if log:
@@ -161,344 +218,170 @@ def _click_if_visible(page: Page, selectors: list[str], *, timeout: float = 2500
     return False
 
 
-def _fill_text_inputs(
-    page: Page,
+def _narrative_value(
+    field: ManifestField,
+    *,
     profile: dict[str, Any],
     defaults: dict[str, Any],
-    *,
     job_context: str,
     use_ai: bool,
-    log: LogFn | None,
-) -> None:
-    inputs = page.locator(
-        "input[type='text'], input[type='email'], input[type='tel'], "
-        "input:not([type]), textarea"
-    )
-    count = inputs.count()
-    for i in range(count):
-        el = inputs.nth(i)
-        try:
-            if not el.is_visible(timeout=500):
-                continue
-            input_type = (el.get_attribute("type") or "text").lower()
-            if input_type in {"hidden", "file", "checkbox", "radio", "submit", "button"}:
-                continue
-            if el.is_disabled():
-                continue
-
-            label = ""
-            el_id = el.get_attribute("id")
-            if el_id:
-                label = _safe_text(page, f"label[for='{el_id}']")
-            if not label:
-                label = el.get_attribute("aria-label") or el.get_attribute("placeholder") or ""
-            if not label:
-                try:
-                    label = el.evaluate(
-                        """(node) => {
-                          const l = node.closest('div,fieldset,li,label')?.querySelector('label,span,p');
-                          return l ? l.innerText : '';
-                        }"""
-                    )
-                except Exception:
-                    label = ""
-
-            label = (label or "").strip()
-            if not label:
-                continue
-            label_l = label.lower()
-            current = (el.input_value() or "").strip()
-
-            # Always correct identity fields — LinkedIn often swaps first/last
-            if "middle name" in label_l or "middle initial" in label_l:
-                want = (profile.get("middle_name") or "").strip()
-                if current != want:
-                    el.fill(want)
-                    _log(f"Set middle name → {want!r}", log)
-                continue
-            if label_l.startswith("first name") or label_l == "first name":
-                want = (profile.get("first_name") or "").strip()
-                if want and current != want:
-                    el.fill(want)
-                    _log(f"Corrected first name → {want}", log)
-                continue
-            if label_l.startswith("last name") or label_l == "last name" or "surname" in label_l:
-                want = (profile.get("last_name") or "").strip()
-                if want and current != want:
-                    el.fill(want)
-                    _log(f"Corrected last name → {want}", log)
-                continue
-
-            # Location typeahead — must pick a suggestion, not free-text
-            if "location" in label_l or (label_l == "city" or "city)" in label_l):
-                errs = _easy_apply_has_errors(page)
-                needs_fix = any("valid" in e.lower() for e in errs) or not current
-                if not needs_fix:
-                    continue
-                city = (
-                    str(defaults.get("location", "")).strip()
-                    or str(profile.get("location", "")).strip()
-                )
-                if not city:
-                    _log("Location field left blank — target location is not configured", log)
-                    continue
-                try:
-                    el.click(timeout=1000)
-                    el.fill("")
-                    el.type(city, delay=60)
-                    page.wait_for_timeout(900)
-                    opt = page.locator(
-                        "[role='listbox'] [role='option'], "
-                        ".basic-typeahead__selectable, "
-                        ".search-typeahead-v2__hit"
-                    ).first
-                    if opt.count() and opt.is_visible(timeout=1500):
-                        opt.click(timeout=2000)
-                        _log(f"Picked location typeahead: {city}", log)
-                    else:
-                        page.keyboard.press("ArrowDown")
-                        page.keyboard.press("Enter")
-                        _log(f"Location keyboard select: {city}", log)
-                except Exception as exc:
-                    _log(f"Location typeahead skip: {exc}", log)
-                continue
-
-            if current:
-                continue
-
-            # Cover letter / longer text
-            tag = el.evaluate("n => n.tagName.toLowerCase()")
-            if tag == "textarea" or "cover" in label_l or "why" in label_l:
-                company = defaults.get("_company", "the company")
-                role = defaults.get("_role", "the role")
-                text = generate_cover_letter(
-                    profile,
-                    company=company,
-                    role=role,
-                    location=defaults.get("location", ""),
-                    job_description=job_context,
-                    use_ai=use_ai,
-                )
-                el.fill(text[:4500])
-                _log(f"Filled long-text field: {label[:60]}", log)
-                continue
-
-            ans = answer_question(
-                label,
+) -> tuple[str, str]:
+    if not use_ai:
+        return "", ""
+    if field.kind == FieldKind.COVER_LETTER:
+        return (
+            generate_cover_letter(
+                profile,
+                company=str(defaults.get("_company") or "the company"),
+                role=str(defaults.get("_role") or "the role"),
+                location=str(defaults.get("location") or profile.get("location") or ""),
+                job_description=job_context,
+                use_ai=True,
+            ),
+            "ai.cover_letter",
+        )
+    if field.kind in {
+        FieldKind.MOTIVATION,
+        FieldKind.COMPETENCY,
+        FieldKind.ADDITIONAL_INFORMATION,
+        FieldKind.NARRATIVE,
+    }:
+        return (
+            answer_question(
+                field.question,
                 profile,
                 job_context=job_context,
                 defaults=defaults,
-                use_ai=use_ai,
-            )
-            if not (ans or "").strip():
-                _log(f"Left blank (unknown — will PING if required): {label[:60]}", log)
-                continue
-            el.fill(ans[:500])
-            _log(f"Filled '{label[:50]}' → {ans[:80]}", log)
-        except Exception as exc:
-            _log(f"Skip input #{i}: {exc}", log)
+                use_ai=True,
+            ),
+            "ai.question_answer",
+        )
+    return "", ""
 
 
-def _handle_file_uploads(page: Page, cv_path: str, log: LogFn | None) -> None:
-    file_inputs = page.locator("input[type='file']")
-    n = file_inputs.count()
-    for i in range(n):
-        el = file_inputs.nth(i)
-        try:
-            el.set_input_files(cv_path)
-            _log(f"Uploaded CV to file input #{i+1}", log)
-        except Exception as exc:
-            _log(f"Could not upload CV on input #{i+1}: {exc}", log)
-
-
-def _field_context(el) -> str:
+def _radio_option(control: Any) -> str:
+    value = str(control.get_attribute("value") or "").strip()
     try:
-        return (
-            el.evaluate(
-                """(node) => {
-                  const root = node.closest('fieldset,div,li,label,form') || node.parentElement;
-                  return (root && root.innerText) ? root.innerText.slice(0, 280) : '';
-                }"""
+        label = str(
+            control.evaluate(
+                "n => (n.closest('label') || n.parentElement)?.innerText || ''"
             )
             or ""
-        ).lower()
+        ).strip()
     except Exception:
-        return ""
+        label = ""
+    return label or value
 
 
-def _wanted_yes_no(
-    context: str,
-    profile: dict[str, Any] | None = None,
-    defaults: dict[str, Any] | None = None,
-) -> str | None:
-    """Return Yes/No only for an explicitly configured question; None if unknown."""
-    c = context.lower()
-    profile = profile or {}
-    defaults = defaults or {}
-    answers = profile.get("answers", {}) or {}
-
-    def configured(*keys: str) -> str | None:
-        for key in keys:
-            value = defaults.get(key) or answers.get(key)
-            if str(value).strip().lower() in {"yes", "no"}:
-                return str(value).strip().title()
-        return None
-
-    if any(
-        k in c
-        for k in (
-            "driving licence",
-            "driving license",
-            "driver's licence",
-            "driver's license",
-            "full driving",
-            "hold a licence",
-            "hold a license",
-        )
-    ):
-        return configured("has_driving_licence", "driving_licence")
-    if any(k in c for k in ("sponsor", "sponsorship", "visa sponsorship", "require a visa")):
-        return configured("require_sponsorship")
-    if any(
-        k in c
-        for k in (
-            "authorized to work",
-            "authorised to work",
-            "right to work",
-            "eligible to work",
-            "legally authorised",
-            "legally authorized",
-            "work authorization",
-        )
-    ):
-        value = configured("authorized_to_work", "work_authorization", "right_to_work")
-        return value
-    if any(k in c for k in ("commute", "relocate", "hybrid", "willing to")):
-        return configured("willing_to_commute", "willing_to_relocate")
-    return None
-
-
-def _select_sensible_options(
+def _fill_manifest_step(
     page: Page,
-    log: LogFn | None,
+    manifest: tuple[ManifestField, ...],
     *,
-    profile: dict[str, Any] | None = None,
-    defaults: dict[str, Any] | None = None,
-) -> None:
-    selects = page.locator("select")
-    for i in range(selects.count()):
-        sel = selects.nth(i)
-        try:
-            if not sel.is_visible(timeout=400):
+    profile: dict[str, Any],
+    defaults: dict[str, Any],
+    cv_path: str,
+    job_context: str,
+    use_ai: bool,
+    log: LogFn | None,
+) -> tuple[tuple[str, ...], tuple[FieldEvidence, ...]]:
+    """Resolve one LinkedIn step through the same typed manifest used by ATS forms."""
+    root = page.locator(EASY_APPLY_ROOT_SELECTOR).first
+    controls = root.locator(CONTROL_SELECTOR)
+    blockers: list[str] = []
+    evidence: list[FieldEvidence] = []
+
+    for field in manifest:
+        label = field.question or field.field_id
+        if not field.visible or field.disabled:
+            evidence.append(field.evidence(resolution="ignored"))
+            continue
+        if field.has_observed_value:
+            evidence.append(field.evidence(resolution="preserved", source="portal.observed"))
+            continue
+
+        control = controls.nth(field.index)
+        if field.kind == FieldKind.CUSTOM_DROPDOWN:
+            if field.required:
+                blockers.append(f"Custom dropdown is unsupported: {label}")
+            evidence.append(field.evidence(resolution="unsupported"))
+            continue
+        if field.input_type == "file":
+            if field.kind != FieldKind.CV_UPLOAD:
+                if field.required:
+                    blockers.append(
+                        f"Required {field.kind.value.replace('_', ' ')} needs an approved document"
+                    )
+                evidence.append(field.evidence(resolution="unresolved"))
                 continue
-            # Skip if already chosen a real value
             try:
-                cur = (sel.input_value() or "").strip()
-                if cur and cur.lower() not in {"", "select an option", "0"}:
-                    # still allow overwrite only for empty-looking placeholders
-                    opt_txt = ""
-                    try:
-                        opt_txt = sel.locator("option:checked").inner_text(timeout=200)
-                    except Exception:
-                        opt_txt = cur
-                    if opt_txt and "select" not in opt_txt.lower():
-                        continue
-            except Exception:
-                pass
-
-            options = sel.locator("option")
-            texts = [options.nth(j).inner_text().strip() for j in range(options.count())]
-            context = _field_context(sel)
-            choice = None
-            wanted = _wanted_yes_no(context, profile, defaults)
-            if wanted and wanted in texts:
-                choice = wanted
-            elif any(k in context for k in ("disability", "veteran", "gender", "race", "ethnicity")):
-                for preferred in ("Prefer not to say", "I am not a protected veteran", "No"):
-                    if preferred in texts:
-                        choice = preferred
-                        break
-            elif "email" in context and profile:
-                email = str(profile.get("email", "")).strip()
-                choice = next((t for t in texts if t.strip() == email), None)
-            elif ("phone" in context or "country" in context) and profile:
-                country = str(profile.get("phone_country", "")).strip().lower()
-                choice = next((t for t in texts if t.strip().lower() == country), None)
-            if not choice:
-                # Do NOT blindly pick Yes — only safe defaults
-                for preferred in ("Prefer not to say", "I am not a protected veteran"):
-                    if preferred in texts:
-                        choice = preferred
-                        break
-            if choice:
-                sel.select_option(label=choice)
-                _log(f"Selected dropdown: {choice}", log)
-        except Exception:
+                control.set_input_files(cv_path)
+                evidence.append(field.evidence(resolution="filled", source="approved.cv"))
+                _log(f"Uploaded approved CV to {label[:60]}", log)
+            except Exception as exc:
+                blockers.append(f"CV upload failed for {label} ({type(exc).__name__})")
+                evidence.append(field.evidence(resolution="blocked"))
             continue
 
-    # Radio groups — label-aware Yes/No (licence=No, sponsorship=No, work rights=Yes)
-    radios = page.locator("input[type='radio']")
-    seen_names: set[str] = set()
-    for i in range(radios.count()):
-        r = radios.nth(i)
+        proposal = resolve_deterministic_answer(field, profile=profile, defaults=defaults)
+        value, source = proposal.value, proposal.source
+        if not value:
+            value, source = _narrative_value(
+                field,
+                profile=profile,
+                defaults=defaults,
+                job_context=job_context,
+                use_ai=use_ai,
+            )
+        if not value:
+            if proposal.blocker:
+                blockers.append(proposal.blocker)
+            elif field.required:
+                blockers.append(f"Required field is unresolved: {label}")
+            evidence.append(field.evidence(resolution="unresolved"))
+            continue
+
+        limit_blocker = answer_limit_blocker(field, value)
+        if limit_blocker:
+            blockers.append(limit_blocker)
+            evidence.append(field.evidence(resolution="over_limit", source=source))
+            continue
+
         try:
-            if not r.is_visible(timeout=300):
-                continue
-            name = r.get_attribute("name") or f"anon-{i}"
-            if name in seen_names:
-                continue
-            context = _field_context(r)
-
-            if any(k in context for k in ("disability", "veteran", "gender", "race", "ethnicity")):
-                prefer = page.locator(f"input[type='radio'][name='{name}']")
-                picked = False
-                for j in range(prefer.count()):
-                    val = (prefer.nth(j).get_attribute("value") or "").lower()
-                    label_txt = ""
-                    try:
-                        label_txt = prefer.nth(j).evaluate(
-                            "n => (n.closest('label')||n.parentElement)?.innerText || ''"
-                        )
-                    except Exception:
-                        pass
-                    if "prefer not" in (label_txt or "").lower() or "prefer not" in val:
-                        prefer.nth(j).check(force=True)
-                        picked = True
-                        break
-                seen_names.add(name)
-                if picked:
-                    _log(f"Radio '{name}': Prefer not to say", log)
-                continue
-
-            value_wanted = _wanted_yes_no(context, profile, defaults)
-            if not value_wanted:
-                seen_names.add(name)
-                _log(f"Left unknown radio group '{name}' for user review", log)
-                continue
-            target = page.locator(
-                f"input[type='radio'][name='{name}'][value='{value_wanted}']"
-            ).first
-            if target.count() == 0:
-                group = page.locator(f"input[type='radio'][name='{name}']")
-                for j in range(group.count()):
-                    label_txt = ""
-                    try:
-                        label_txt = group.nth(j).evaluate(
-                            "n => (n.closest('label')||n.parentElement)?.innerText || ''"
-                        )
-                    except Exception:
-                        pass
-                    if (label_txt or "").strip().lower() == value_wanted.lower():
-                        group.nth(j).check(force=True)
-                        seen_names.add(name)
-                        _log(f"Radio via label: {value_wanted} ({context[:50]})", log)
-                        break
+            if field.tag == "select":
+                choice = exact_option(field.options, value)
+                if not choice:
+                    blockers.append(f"Confirmed answer has no exact option for {label}")
+                    evidence.append(field.evidence(resolution="unresolved", source=source))
+                    continue
+                control.select_option(label=choice)
+            elif field.input_type == "radio":
+                option = _radio_option(control)
+                if not exact_option((field.observed_value, option), value):
+                    evidence.append(field.evidence(resolution="not_selected", source=source))
+                    continue
+                control.check()
+            elif field.input_type == "checkbox":
+                normalized = value.strip().lower()
+                if normalized in {"yes", "true", "checked", "agree"}:
+                    control.check()
+                elif normalized in {"no", "false", "unchecked", "decline"}:
+                    if field.required:
+                        blockers.append(f"Required checkbox was explicitly declined: {label}")
+                    evidence.append(field.evidence(resolution="explicit_unchecked", source=source))
+                    continue
+                else:
+                    blockers.append(f"Candidate must confirm the checkbox: {label}")
+                    evidence.append(field.evidence(resolution="unresolved", source=source))
+                    continue
             else:
-                target.check(force=True)
-                seen_names.add(name)
-                _log(f"Radio '{name}' → {value_wanted}", log)
-        except Exception:
-            continue
+                control.fill(value)
+            evidence.append(field.evidence(resolution="filled", source=source))
+            _log(f"Filled {label[:60]} from {source}", log)
+        except Exception as exc:
+            blockers.append(f"Could not fill {label} ({type(exc).__name__})")
+            evidence.append(field.evidence(resolution="blocked", source=source))
+
+    return tuple(dict.fromkeys(blockers)), tuple(evidence)
 
 
 def _dismiss_modals(page: Page) -> None:
@@ -527,9 +410,7 @@ def _dismiss_modals(page: Page) -> None:
 
 
 def _easy_apply_modal(page: Page):
-    return page.locator(
-        ".jobs-easy-apply-modal, .jobs-easy-apply-content, div[aria-labelledby*='jobs-apply']"
-    ).first
+    return page.locator(EASY_APPLY_ROOT_SELECTOR).first
 
 
 def _click_modal_button(
@@ -537,55 +418,55 @@ def _click_modal_button(
     labels: list[str],
     *,
     timeout: float = 3500,
-    force: bool = False,
 ) -> str | None:
-    """Click a footer button inside Easy Apply (partial aria-label / text match)."""
+    """Click an exact, adapter-declared, non-final Easy Apply control."""
     modal = _easy_apply_modal(page)
-    # Prefer footer so we don't click header/nav buttons
+    if not modal.count():
+        return None
     roots = []
-    if modal.count():
-        footer = modal.locator(
-            "footer, .jobs-easy-apply-footer, div[class*='easy-apply-modal__footer'], "
-            ".jobs-easy-apply-modal__footer"
-        ).first
-        if footer.count():
-            roots.append(footer)
-        roots.append(modal)
-    roots.append(page)
+    footer = modal.locator(
+        "footer, .jobs-easy-apply-footer, div[class*='easy-apply-modal__footer'], "
+        ".jobs-easy-apply-modal__footer"
+    ).first
+    if footer.count():
+        roots.append(footer)
+    roots.append(modal)
 
     for label in labels:
         for root in roots:
-            candidates = [
-                root.locator(f"button[aria-label*='{label}' i]").first,
-                root.locator(f"button:has-text('{label}')").first,
-            ]
-            for loc in candidates:
-                try:
-                    if not (loc.count() and loc.is_visible(timeout=500)):
-                        continue
-                    # Avoid Discard / Save while advancing
-                    aria = (loc.get_attribute("aria-label") or "").lower()
-                    text = (loc.inner_text() or "").lower()
-                    blob = aria + " " + text
-                    if any(bad in blob for bad in ("discard", "delete", "save for later")):
-                        continue
-                    # Skip disabled unless force (LinkedIn sometimes keeps Next enabled visually)
-                    try:
-                        disabled = loc.is_disabled(timeout=300)
-                    except Exception:
-                        disabled = False
-                    if disabled and not force:
-                        continue
-                    loc.scroll_into_view_if_needed(timeout=1000)
-                    loc.click(timeout=timeout, force=force)
-                    return label
-                except Exception:
+            loc = root.get_by_role("button", name=label, exact=True).first
+            try:
+                if not (loc.count() and loc.is_visible(timeout=500)):
                     continue
+                aria = (loc.get_attribute("aria-label") or "").lower()
+                visible_text = (loc.inner_text() or "").lower()
+                blob = f"{aria} {visible_text}"
+                if any(
+                    bad in blob
+                    for bad in (
+                        "apply",
+                        "submit",
+                        "send application",
+                        "discard",
+                        "delete",
+                        "save for later",
+                    )
+                ):
+                    continue
+                if (loc.get_attribute("type") or "button").lower() == "submit":
+                    continue
+                if loc.is_disabled(timeout=300):
+                    continue
+                loc.scroll_into_view_if_needed(timeout=1000)
+                loc.click(timeout=timeout)
+                return label
+            except Exception:
+                continue
     return None
 
 
 def _unanswered_required_hints(page: Page) -> list[str]:
-    """Best-effort list of empty required fields blocking Next/Submit."""
+    """Best-effort list of empty required fields blocking safe progress or review."""
     hints: list[str] = []
     hints.extend(_easy_apply_has_errors(page))
     try:
@@ -665,64 +546,24 @@ def _visible_submit_candidate(page: Page) -> bool:
 def _fill_easy_apply_step(
     page: Page,
     *,
+    manifest: tuple[ManifestField, ...],
     profile: dict[str, Any],
     local_defaults: dict[str, Any],
     cv_path: str,
     job_context: str,
     use_ai: bool,
     log: LogFn | None,
-) -> None:
-    _handle_file_uploads(page, cv_path, log)
-    _fill_text_inputs(
+) -> tuple[tuple[str, ...], tuple[FieldEvidence, ...]]:
+    return _fill_manifest_step(
         page,
-        profile,
-        local_defaults,
+        manifest,
+        profile=profile,
+        defaults=local_defaults,
+        cv_path=cv_path,
         job_context=job_context,
         use_ai=use_ai,
         log=log,
     )
-    _select_sensible_options(page, log, profile=profile, defaults=local_defaults)
-    _check_required_consent_boxes(page, log)
-    # Uncheck follow company if present (optional)
-    try:
-        follow = page.locator("label:has-text('Follow'), input[id*='follow-company']").first
-        if follow.count() and follow.is_visible(timeout=400):
-            pass
-    except Exception:
-        pass
-
-
-def _check_required_consent_boxes(
-    page: Page,
-    log: LogFn | None,
-    *,
-    accept_required_terms: bool = False,
-) -> None:
-    """Handle required terms only when the user explicitly allowed that policy."""
-    modal = _easy_apply_modal(page)
-    if not modal.count():
-        return
-    boxes = modal.locator("input[type='checkbox']")
-    for i in range(boxes.count()):
-        try:
-            box = boxes.nth(i)
-            if not box.is_visible(timeout=300) or box.is_checked():
-                continue
-            text = box.evaluate(
-                "n => (n.closest('label,div,fieldset')?.innerText || '').slice(0,500)"
-            ).lower()
-            can_accept = (
-                accept_required_terms
-                and any(term in text for term in ("terms", "privacy", "data processing", "acknowledge"))
-                and not any(term in text for term in ("marketing", "newsletter", "job alerts"))
-            )
-            if can_accept:
-                box.check(timeout=3000)
-                _log(f"Accepted required application terms checkbox #{i+1}", log)
-            else:
-                _log(f"Left consent/policy checkbox #{i+1} unchecked for user review", log)
-        except Exception:
-            continue
 
 
 def complete_easy_apply(
@@ -740,30 +581,62 @@ def complete_easy_apply(
     log: LogFn | None,
     allow_submit: bool | None = None,
     accept_required_terms: bool = False,
+    mode: RunMode | str | None = None,
+    ai_policy: AiPolicy | str | None = None,
 ) -> ApplyResult:
     """
-    Full Easy Apply wizard:
-    fill → Next/Continue (repeat) → Review → Submit application.
-    On unknown required fields: leave modal open and return needs_info (PING).
+    Assisted Easy Apply wizard: inspect → fill → verified progress → manual review.
+    Unknown required fields leave the modal open and return needs-information.
     """
-    submit_enabled = (not dry_run) if allow_submit is None else bool(allow_submit)
-    rewrite_required = ai_rewrite_required(job_context, use_ai=use_ai)
+    selected_mode = RunMode.parse(mode, dry_run=dry_run)
+    selected_ai_policy = AiPolicy.parse(ai_policy)
+    if allow_submit or selected_mode == RunMode.GUARDED_AUTO_SUBMIT:
+        return ApplyResult(
+            title,
+            company,
+            url,
+            OutcomeStatus.SUBMISSION_DISABLED,
+            "Automated final submission is disabled in this safety release.",
+        )
+    policy_prohibited = ai_policy_prohibited(job_context)
+    policy_conflict = bool(
+        use_ai and selected_ai_policy == AiPolicy.ALLOWED and policy_prohibited
+    )
+    effective_ai = bool(
+        use_ai and selected_ai_policy == AiPolicy.ALLOWED and not policy_prohibited
+    )
     local_defaults = {
         **defaults,
         "_company": company or "the company",
         "_role": title or "the role",
     }
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(300)
+    if selected_mode == RunMode.LOCAL_PREVIEW:
+        try:
+            manifest = extract_field_manifest(
+                page,
+                root_selector=EASY_APPLY_ROOT_SELECTOR,
+            )
+        except Exception as exc:
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.FAILED_RETRYABLE,
+                f"Field manifest extraction failed ({type(exc).__name__}); nothing was changed.",
+            )
+        return ApplyResult(
+            title,
+            company,
+            url,
+            OutcomeStatus.PREVIEW_READY,
+            f"Inspected {len(manifest)} fields; no portal values, uploads, or controls were changed.",
+            field_evidence=tuple(field.evidence(resolution="observed") for field in manifest),
+        )
     _dismiss_modals(page)
 
-    advance_labels = [
-        "Review your application",
-        "Review",
-        "Continue to next step",
-        "Next",
-        "Continue",
-    ]
-    submit_labels = ["Submit application", "Submit Application"]
+    all_evidence: list[FieldEvidence] = []
+    actions: list[str] = []
 
     for step in range(16):
         modal = _easy_apply_modal(page)
@@ -771,175 +644,250 @@ def complete_easy_apply(
             if page.locator("text=Application sent").count() or page.locator(
                 "text=Your application was sent"
             ).count():
-                return ApplyResult(title, company, url, "applied", "Application sent confirmation")
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    OutcomeStatus.SUBMISSION_UNCONFIRMED,
+                    "The modal closed without a receipt-backed submission initiated by this run.",
+                    actions=tuple(actions),
+                    field_evidence=tuple(all_evidence),
+                )
             if step == 0:
-                return ApplyResult(title, company, url, "needs_review", "Easy Apply modal not open")
-            break
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    OutcomeStatus.REVIEW_READY,
+                    "Easy Apply modal not open.",
+                    actions=tuple(actions),
+                )
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.SUBMISSION_UNCONFIRMED,
+                "The application modal disappeared; submission was not inferred.",
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
 
-        _log(f"Easy Apply step {step + 1}: filling fields…", log)
-        _fill_easy_apply_step(
-            page,
-            profile=profile,
-            local_defaults=local_defaults,
-            cv_path=cv_path,
-            job_context=job_context,
-            use_ai=use_ai,
-            log=log,
-        )
-        page.wait_for_timeout(600)
+        try:
+            manifest = extract_field_manifest(
+                page,
+                root_selector=EASY_APPLY_ROOT_SELECTOR,
+            )
+        except Exception as exc:
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.FAILED_RETRYABLE,
+                f"Field manifest extraction failed ({type(exc).__name__}); nothing on this step was changed.",
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        unsupported = [
+            field.question or field.field_id
+            for field in manifest
+            if field.visible
+            and not field.disabled
+            and field.required
+            and not field.has_observed_value
+            and field.kind == FieldKind.CUSTOM_DROPDOWN
+        ]
+        if unsupported:
+            blockers = tuple(f"Custom dropdown is unsupported: {item}" for item in unsupported)
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.UNSUPPORTED,
+                "The application paused before changing an unsupported required control.",
+                blockers=blockers,
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        missing_documents = [
+            field
+            for field in manifest
+            if field.visible
+            and not field.disabled
+            and field.required
+            and not field.has_observed_value
+            and field.input_type == "file"
+            and field.kind != FieldKind.CV_UPLOAD
+        ]
+        if missing_documents:
+            blockers = tuple(
+                f"Required {field.kind.value.replace('_', ' ')} needs an approved document"
+                for field in missing_documents
+            )
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.NEEDS_INFORMATION,
+                "The application paused before uploading an unapproved document.",
+                blockers=blockers,
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence)
+                + tuple(field.evidence(resolution="unresolved") for field in missing_documents),
+            )
+
         try:
             modal_text = modal.inner_text(timeout=1000) or ""
         except Exception:
             modal_text = ""
-        rewrite_required = rewrite_required or ai_rewrite_required(
-            f"{job_context}\n{modal_text}",
-            use_ai=use_ai,
-        )
-        declarations = attestation_blockers(modal_text)
-        can_submit = submit_enabled and not rewrite_required and not declarations
-
-        if dry_run:
-            _click_modal_button(page, ["Discard", "Cancel"])
-            _click_if_visible(page, ["button[aria-label='Dismiss']"])
-            return ApplyResult(title, company, url, "dry_run", f"Filled through step {step + 1}")
-
-        # 1) Submit when available — only if every required field is resolved.
-        if _visible_submit_candidate(page):
-            _check_required_consent_boxes(
-                page,
-                log,
-                accept_required_terms=accept_required_terms and can_submit,
+        if ai_policy_prohibited(f"{job_context}\n{modal_text}"):
+            policy_conflict = policy_conflict or bool(
+                use_ai and selected_ai_policy == AiPolicy.ALLOWED
             )
+            effective_ai = False
+        declarations = attestation_blockers(modal_text)
+        if policy_conflict:
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.POLICY_BLOCKED,
+                "Employer AI guidance conflicts with the requested policy; AI fields were left untouched.",
+                blockers=("Employer AI policy conflicts with the requested AI setting.",),
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        if declarations:
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.NEEDS_INFORMATION,
+                "The application paused for an explicit declaration or attestation.",
+                blockers=tuple(declarations),
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+
+        _log(f"Easy Apply step {step + 1}: filling fields…", log)
+        fill_blockers, step_evidence = _fill_easy_apply_step(
+            page,
+            manifest=manifest,
+            profile=profile,
+            local_defaults=local_defaults,
+            cv_path=cv_path,
+            job_context=job_context,
+            use_ai=effective_ai,
+            log=log,
+        )
+        all_evidence.extend(step_evidence)
+        if fill_blockers:
+            status = (
+                OutcomeStatus.UNSUPPORTED
+                if any("custom dropdown" in blocker.lower() for blocker in fill_blockers)
+                else OutcomeStatus.NEEDS_INFORMATION
+            )
+            return ApplyResult(
+                title,
+                company,
+                url,
+                status,
+                "The application paused with unresolved fields.",
+                blockers=fill_blockers,
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        page.wait_for_timeout(600)
+
+        # Stop when a final action is visible; this release never clicks it.
+        if _visible_submit_candidate(page):
             hints = _unanswered_required_hints(page)
             if hints:
                 detail = "NEED INFO (modal left open): " + "; ".join(hints[:4])
                 _log(f"*** PING: {detail} ***", log)
-                return ApplyResult(title, company, url, "needs_info", detail)
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    OutcomeStatus.NEEDS_INFORMATION,
+                    detail,
+                    blockers=tuple(hints),
+                    actions=tuple(actions),
+                    field_evidence=tuple(all_evidence),
+                )
             verification = verify_application_ready(
                 page,
                 profile=profile,
                 cv_path=cv_path,
-                root_selector=".jobs-easy-apply-modal, [role='dialog'], body",
+                root_selector=EASY_APPLY_ROOT_SELECTOR,
             )
             if verification.blockers:
                 detail = "NEED INFO (modal left open): " + "; ".join(
                     verification.blockers[:4]
                 )
-                return ApplyResult(title, company, url, "needs_info", detail)
-            if rewrite_required:
                 return ApplyResult(
                     title,
                     company,
                     url,
-                    "needs_review",
-                    "AI-assisted draft answers populated; employer AI guidance requires user rewrite; Submit locked",
+                    OutcomeStatus.NEEDS_INFORMATION,
+                    detail,
+                    blockers=tuple(verification.blockers),
+                    actions=tuple(actions),
+                    field_evidence=tuple(all_evidence),
                 )
-            if declarations:
-                return ApplyResult(
-                    title,
-                    company,
-                    url,
-                    "needs_review",
-                    "; ".join(declarations) + "; Submit left for user",
-                )
-            if not submit_enabled:
-                return ApplyResult(
-                    title,
-                    company,
-                    url,
-                    "needs_review",
-                    "Application filled to final review; Submit left for user",
-                )
-        submitted = _click_modal_button(page, submit_labels) if can_submit else None
-        if not submitted:
-            try:
-                sub = page.locator(
-                    "button[data-live-test-easy-apply-submit-button], "
-                    "button[aria-label='Submit application']"
-                ).first
-                if can_submit and sub.count() and sub.is_visible(timeout=800):
-                    # Clear discard overlay if present (Cancel = keep app)
-                    _dismiss_modals(page)
-                    sub.click(timeout=5000, force=True)
-                    submitted = "Submit application"
-            except Exception:
-                pass
-        if submitted:
-            page.wait_for_timeout(2000)
-            if page.locator("text=Application sent").count() or page.locator(
-                "text=Your application was sent"
-            ).count() or _easy_apply_modal(page).count() == 0:
-                _click_modal_button(page, ["Done"])
-                _click_if_visible(page, ["button[aria-label='Dismiss']", "button:has-text('Done')"])
-                _log("Submitted Easy Apply", log)
-                return ApplyResult(title, company, url, "applied", f"Submitted after step {step + 1}")
-            errs = _unanswered_required_hints(page)
-            if errs:
-                _log(f"Submit blocked by errors: {errs}", log)
-                _fill_easy_apply_step(
-                    page,
-                    profile=profile,
-                    local_defaults=local_defaults,
-                    cv_path=cv_path,
-                    job_context=job_context,
-                    use_ai=use_ai,
-                    log=log,
-                )
-                submitted2 = _click_modal_button(page, submit_labels) if can_submit else None
-                if submitted2:
-                    page.wait_for_timeout(1800)
-                    if page.locator("text=Application sent").count() or _easy_apply_modal(page).count() == 0:
-                        _click_modal_button(page, ["Done"])
-                        return ApplyResult(title, company, url, "applied", "Submitted after fixing errors")
-                hints = _unanswered_required_hints(page) or errs
-                detail = "NEED INFO (modal left open): " + "; ".join(hints[:4])
-                _log(f"*** PING: {detail} ***", log)
-                return ApplyResult(title, company, url, "needs_info", detail)
-
-        # 2) Advance: Review / Next / Continue
-        advanced = _click_modal_button(page, advance_labels)
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.REVIEW_READY,
+                "Application filled to final review; Submit left for the candidate.",
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        # Advance only through exact LinkedIn-declared, non-final labels.
+        advanced = _click_modal_button(page, list(LINKEDIN_PROGRESS_LABELS))
         if not advanced:
             hints = _unanswered_required_hints(page)
-            _log("No Next/Submit — retry fill once" + (f" (hints: {hints})" if hints else ""), log)
-            _fill_easy_apply_step(
-                page,
-                profile=profile,
-                local_defaults=local_defaults,
-                cv_path=cv_path,
-                job_context=job_context,
-                use_ai=use_ai,
-                log=log,
-            )
-            page.wait_for_timeout(600)
-            submitted = _click_modal_button(page, submit_labels) if can_submit else None
-            if submitted:
-                page.wait_for_timeout(1500)
-                if page.locator("text=Application sent").count() or _easy_apply_modal(page).count() == 0:
-                    _click_modal_button(page, ["Done"])
-                    return ApplyResult(title, company, url, "applied", "Submitted after retry fill")
-            advanced = _click_modal_button(page, advance_labels)
-            if not advanced:
-                # Last try: force-click Next if present but Playwright thinks disabled
-                advanced = _click_modal_button(page, advance_labels, force=True)
-            if not advanced:
-                hints = _unanswered_required_hints(page)
-                detail = "NEED INFO (modal left open)"
-                if hints:
-                    detail += ": " + "; ".join(hints[:4])
-                else:
-                    detail += ": unknown required field / captcha — please fill in Chromium"
+            if hints:
+                detail = "NEED INFO (modal left open): " + "; ".join(hints[:4])
                 _log(f"*** PING: {detail} ***", log)
-                # Leave modal open for the user — do NOT discard
-                return ApplyResult(title, company, url, "needs_info", detail)
+                return ApplyResult(
+                    title,
+                    company,
+                    url,
+                    OutcomeStatus.NEEDS_INFORMATION,
+                    detail,
+                    blockers=tuple(hints),
+                    actions=tuple(actions),
+                    field_evidence=tuple(all_evidence),
+                )
+            return ApplyResult(
+                title,
+                company,
+                url,
+                OutcomeStatus.REVIEW_READY,
+                "No verified non-final action remains; review the open application.",
+                actions=tuple(actions),
+                field_evidence=tuple(all_evidence),
+            )
+        actions.append(f"progress:{advanced}")
         _log(f"Clicked '{advanced}'", log)
         page.wait_for_timeout(1200)
 
     hints = _unanswered_required_hints(page)
-    detail = "NEED INFO: exited wizard without submit"
+    detail = "NEED INFO: exited wizard without reaching a verified review step"
     if hints:
         detail += " — " + "; ".join(hints[:4])
     _log(f"*** PING: {detail} ***", log)
-    return ApplyResult(title, company, url, "needs_info", detail)
+    return ApplyResult(
+        title,
+        company,
+        url,
+        "needs_info",
+        detail,
+        blockers=tuple(hints),
+        actions=tuple(actions),
+        field_evidence=tuple(all_evidence),
+    )
 
 
 def apply_to_current_job(
@@ -955,7 +903,19 @@ def apply_to_current_job(
     account_credentials: Any | None = None,
     verification_client: Any | None = None,
     accept_required_terms: bool = False,
+    mode: RunMode | str | None = None,
+    ai_policy: AiPolicy | str | None = None,
 ) -> ApplyResult:
+    selected_mode = RunMode.parse(mode, dry_run=dry_run)
+    selected_ai_policy = AiPolicy.parse(ai_policy)
+    if allow_submit or selected_mode == RunMode.GUARDED_AUTO_SUBMIT:
+        return ApplyResult(
+            "",
+            "",
+            normalize_job_url(page.url),
+            OutcomeStatus.SUBMISSION_DISABLED,
+            "Automated final submission is disabled in this safety release.",
+        )
     title = (
         _safe_text(page, "h1")
         or _safe_text(page, ".job-details-jobs-unified-top-card__job-title")
@@ -981,6 +941,15 @@ def apply_to_current_job(
         ) or _safe_text(page, "a.job-details-jobs-unified-top-card__company-name")
 
     job_context = _safe_text(page, "#job-details") or _safe_text(page, ".jobs-description")
+
+    if selected_mode == RunMode.LOCAL_PREVIEW:
+        return ApplyResult(
+            title,
+            company,
+            url,
+            OutcomeStatus.PREVIEW_READY,
+            "Inspected the job listing; the Apply control and application form were not opened.",
+        )
 
     local_defaults = {
         **defaults,
@@ -1012,7 +981,7 @@ def apply_to_current_job(
             has_easy = False
 
     if has_easy or _easy_apply_modal(page).count() or "/apply" in (page.url or "").lower():
-        return complete_easy_apply(
+        result = complete_easy_apply(
             page,
             profile=profile,
             defaults=local_defaults,
@@ -1026,7 +995,12 @@ def apply_to_current_job(
             log=log,
             allow_submit=allow_submit,
             accept_required_terms=accept_required_terms,
+            mode=selected_mode,
+            ai_policy=selected_ai_policy,
         )
+        if has_easy:
+            result.actions = ("open:easy-apply",) + result.actions
+        return result
 
     # 2) External Apply (company website / ATS)
     from .external_apply import fill_generic_application_form, looks_like_signup_wall
@@ -1041,7 +1015,7 @@ def apply_to_current_job(
         except Exception:
             continue
     if apply_btn is None:
-        return ApplyResult(title, company, url, "skipped", "No Apply button found")
+        return ApplyResult(title, company, url, OutcomeStatus.UNSUPPORTED, "No supported Apply entry action found")
 
     context = page.context
     before_pages = list(context.pages)
@@ -1055,7 +1029,7 @@ def apply_to_current_job(
     except Exception:
         page.wait_for_timeout(3000)
         if _easy_apply_modal(page).count():
-            return complete_easy_apply(
+            result = complete_easy_apply(
                 page,
                 profile=profile,
                 defaults=local_defaults,
@@ -1069,7 +1043,11 @@ def apply_to_current_job(
                 log=log,
                 allow_submit=allow_submit,
                 accept_required_terms=accept_required_terms,
+                mode=selected_mode,
+                ai_policy=selected_ai_policy,
             )
+            result.actions = ("open:application-entry",) + result.actions
+            return result
         if len(context.pages) > len(before_pages):
             external = context.pages[-1]
         elif page.url != before_url:
@@ -1093,12 +1071,20 @@ def apply_to_current_job(
     page.wait_for_timeout(1000)
 
     _log(f"External apply page: {external.url}", log)
-    if looks_like_signup_wall(external) and account_credentials is None:
+    if (
+        selected_mode != RunMode.LOCAL_PREVIEW
+        and looks_like_signup_wall(external)
+        and account_credentials is None
+    ):
         _log(f"*** PING: SIGNUP/LOGIN REQUIRED *** {external.url}", log)
         return ApplyResult(title, company, url, "needs_signup", f"Signup wall: {external.url}")
 
     resolved_credentials = account_credentials
-    if looks_like_signup_wall(external) and hasattr(account_credentials, "for_portal"):
+    if (
+        selected_mode != RunMode.LOCAL_PREVIEW
+        and looks_like_signup_wall(external)
+        and hasattr(account_credentials, "for_portal")
+    ):
         try:
             resolved_credentials = account_credentials.for_portal(
                 company or "the company",
@@ -1124,25 +1110,24 @@ def apply_to_current_job(
         use_ai=use_ai,
         dry_run=dry_run,
         log=log,
-        # Existing LinkedIn --submit behavior applies to Easy Apply only.
-        # External auto-submission requires the full-auto caller to opt in explicitly.
+        # Retained for call compatibility; every submission request is rejected.
         allow_submit=False if allow_submit is None else allow_submit,
         account_credentials=resolved_credentials,
         verification_client=verification_client,
         accept_required_terms=accept_required_terms,
+        mode=selected_mode,
+        ai_policy=selected_ai_policy,
     )
-    if "needs_signup" in detail:
-        _log(f"*** PING: SIGNUP/LOGIN REQUIRED *** {external.url}", log)
-        return ApplyResult(title, company, url, "needs_signup", detail)
-    if "external_needs_info" in detail:
-        status = "needs_info"
-    elif "submitted" in detail:
-        status = "applied"
-    elif dry_run:
-        status = "dry_run"
-    else:
-        status = "needs_review"
-    return ApplyResult(title, company, url, status, detail)
+    return ApplyResult(
+        title,
+        company,
+        url,
+        detail.status,
+        detail.detail,
+        blockers=detail.blockers,
+        actions=("open:external-apply",) + detail.actions,
+        field_evidence=detail.field_evidence,
+    )
 
 
 def _collect_job_hrefs(page: Page, *, limit: int, log: LogFn | None) -> list[str]:
@@ -1214,6 +1199,8 @@ def run_linkedin_auto_apply(
     account_credentials: Any | None = None,
     verification_client: Any | None = None,
     accept_required_terms: bool = False,
+    mode: RunMode | str | None = None,
+    ai_policy: AiPolicy | str | None = None,
 ) -> RunSummary:
     from .cleanup import cleanup_run_logs, merge_applied_from_summary, sanitize_summary_for_disk
     from .application_flow import missing_application_details
@@ -1221,6 +1208,19 @@ def run_linkedin_auto_apply(
     profile = profile or load_profile()
     defaults = defaults or {}
     summary = RunSummary(searched_keywords=keywords, location=location)
+    selected_mode = RunMode.parse(mode, dry_run=dry_run)
+    selected_ai_policy = AiPolicy.parse(ai_policy)
+    if allow_submit or selected_mode == RunMode.GUARDED_AUTO_SUBMIT:
+        summary.results.append(
+            ApplyResult(
+                "",
+                "",
+                "",
+                OutcomeStatus.SUBMISSION_DISABLED,
+                "Automated final submission is disabled; no browser was opened.",
+            )
+        )
+        return summary
     skip_urls = set(skip_urls or set())
 
     missing = missing_application_details(
@@ -1287,7 +1287,8 @@ def run_linkedin_auto_apply(
                 # Stay on search UI — direct /jobs/view often has no button.jobs-apply-button
                 open_job_detail(page, href, search_url=search_url)
                 page.wait_for_timeout(800)
-                _dismiss_modals(page)
+                if selected_mode != RunMode.LOCAL_PREVIEW:
+                    _dismiss_modals(page)
                 # Narrow already-applied detection (avoid false positives)
                 applied_badge = page.locator(
                     ".jobs-unified-top-card__applied-state, "
@@ -1317,6 +1318,8 @@ def run_linkedin_auto_apply(
                     account_credentials=account_credentials,
                     verification_client=verification_client,
                     accept_required_terms=accept_required_terms,
+                    mode=selected_mode,
+                    ai_policy=selected_ai_policy,
                 )
                 # Close only leftover LinkedIn tabs — never close company ATS signup tabs
                 for extra in list(page.context.pages)[1:]:
@@ -1329,10 +1332,14 @@ def run_linkedin_auto_apply(
 
                 summary.results.append(result)
                 _log(f"[{result.status}] {result.title} @ {result.company} — {result.detail}", log)
-                if result.status in {"applied", "dry_run"}:
+                if result.status in {
+                    OutcomeStatus.PREVIEW_READY,
+                    OutcomeStatus.REVIEW_READY,
+                    OutcomeStatus.SUBMITTED_CONFIRMED,
+                }:
                     applied += 1
                     skip_urls.add(href)
-                elif result.status == "needs_signup":
+                elif result.status == OutcomeStatus.NEEDS_AUTHENTICATION:
                     skip_urls.add(href)  # don't loop forever; queued for manual
                 time.sleep(delay_seconds)
             except Exception as exc:

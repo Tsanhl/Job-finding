@@ -6,6 +6,15 @@ Verifies Easy Apply click + external Apply tab open still work.
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import sys
 from pathlib import Path
 

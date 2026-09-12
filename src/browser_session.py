@@ -46,7 +46,6 @@ def launch_owner(browser_data_dir: str, *, headless: bool = False) -> BrowserCon
         viewport={"width": 1400, "height": 900},
         locale="en-GB",
         args=[
-            "--disable-blink-features=AutomationControlled",
             "--remote-debugging-port=9333",
         ],
         slow_mo=40,

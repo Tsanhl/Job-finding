@@ -245,8 +245,8 @@ def application_intake_questions(
     questions.extend(
         [
             "Please confirm the profile facts and CV that may be used for this application.",
-            "Please confirm whether OpenAI may be used for drafting; never use it to invent facts.",
-            "Please confirm whether to run a dry run or allow Easy Apply submission.",
+            "Please mark the employer AI policy allowed, prohibited, or unknown; unknown keeps AI drafting off.",
+            "Please choose local preview or assisted review; automated final submission is disabled.",
             "Please confirm that any unknown question, CAPTCHA, consent, or login wall must pause for you.",
         ]
     )

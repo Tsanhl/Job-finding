@@ -305,7 +305,8 @@ def answer_question(
     # Safe fallback — never invent facts when a question is not in the profile.
     q = _norm(question)
     if any(k in q for k in ("gender", "race", "ethnicity", "disability", "veteran")):
-        return "Prefer not to say"
+        # "Prefer not to say" is a personal choice, not a safe default.
+        return ""
     if "cover letter" in q or "why do you want" in q or "why are you interested" in q:
         summary = str(profile.get("summary", "")).strip()
         return summary if summary else ""
@@ -327,7 +328,7 @@ def _answer_with_openai(question: str, profile: dict[str, Any], *, job_context: 
 Rules:
 - Be concise (1-4 sentences, or a short phrase if the field is short).
 - Do not invent facts.
-- For sensitive demographic questions, answer "Prefer not to say" unless profile has an explicit answer.
+- For sensitive demographic questions without an explicit profile answer, return an empty answer.
 - If visa/sponsorship is unclear, say the candidate should confirm before submitting.
 
 Question: {question}

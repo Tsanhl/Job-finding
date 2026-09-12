@@ -47,6 +47,11 @@ class SubmissionGuardTests(unittest.TestCase):
     def test_final_verifier_finds_missing_and_mismatched_values(self) -> None:
         fields = [
             {
+                "tag": "input", "type": "text", "name": "first_name", "label": "First name",
+                "required": True, "visible": True, "disabled": False,
+                "value": "Example Candidate", "checked": False, "files": [],
+            },
+            {
                 "tag": "input", "type": "email", "name": "email", "label": "Email",
                 "required": True, "visible": True, "disabled": False,
                 "value": "wrong@example.test", "checked": False, "files": [],
@@ -64,11 +69,16 @@ class SubmissionGuardTests(unittest.TestCase):
         ]
         report = verify_application_ready(
             _FakePage(fields),
-            profile={"email": "candidate@example.test", "phone": "+44 7000 000000"},
+            profile={
+                "first_name": "Example",
+                "email": "candidate@example.test",
+                "phone": "+44 7000 000000",
+            },
             cv_path="/tmp/current_cv.pdf",
         )
         combined = " ".join(report.blockers).lower()
         self.assertIn("email", combined)
+        self.assertIn("first name", combined)
         self.assertIn("required field is empty", combined)
         self.assertIn("approved cv", combined)
 

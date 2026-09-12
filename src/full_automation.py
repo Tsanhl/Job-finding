@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .account_automation import GmailBrowserVerifier, PortalCredentials
-from .application_ledger import ApplicationLedger
+from .application_ledger import ApplicationLedger, LedgerCorruptionError
+from .application_models import AiPolicy, OutcomeStatus, RunMode
 from .application_flow import missing_application_details
 from .application_workers import MAX_APPLICATIONS_PER_BATCH, resolve_worker_count
 from .browser_session import CDP_URL, get_context
@@ -227,6 +228,8 @@ def _apply_one_job(
     cv_path: str,
     use_ai: bool,
     verifier: GmailBrowserVerifier,
+    ai_policy: AiPolicy,
+    mode: RunMode,
 ) -> ApplyResult:
     from playwright.sync_api import sync_playwright
 
@@ -265,12 +268,14 @@ def _apply_one_job(
                 defaults=defaults,
                 cv_path=cv_path,
                 use_ai=use_ai,
-                dry_run=False,
-                allow_submit=request.submission_policy == "auto-submit",
+                dry_run=mode == RunMode.LOCAL_PREVIEW,
+                allow_submit=False,
                 account_credentials=credentials,
                 verification_client=verifier,
                 accept_required_terms=request.accept_required_terms,
                 log=None,
+                mode=mode,
+                ai_policy=ai_policy,
             )
         except Exception as exc:
             safe_detail = str(exc)
@@ -283,14 +288,19 @@ def _apply_one_job(
 
 def _ledger_status(result: ApplyResult) -> str:
     return {
-        "applied": "submitted",
-        "needs_review": "review_ready",
-        "needs_info": "blocked",
-        "needs_signup": "blocked",
-        "skipped": "rejected",
-        "error": "failed",
-        "dry_run": "review_ready",
-    }.get(result.status, result.status)
+        OutcomeStatus.SUBMITTED_CONFIRMED: "submitted-confirmed",
+        OutcomeStatus.REVIEW_READY: "review-ready",
+        OutcomeStatus.PREVIEW_READY: "preview-ready",
+        OutcomeStatus.NEEDS_INFORMATION: "needs-information",
+        OutcomeStatus.NEEDS_AUTHENTICATION: "needs-authentication",
+        OutcomeStatus.POLICY_BLOCKED: "policy-blocked",
+        OutcomeStatus.UNSUPPORTED: "unsupported",
+        OutcomeStatus.SKIPPED_UNSUITABLE: "skipped-unsuitable",
+        OutcomeStatus.EMPLOYER_REJECTED: "employer-rejected",
+        OutcomeStatus.SUBMISSION_UNCONFIRMED: "submission-unconfirmed",
+        OutcomeStatus.SUBMISSION_DISABLED: "submission-disabled",
+        OutcomeStatus.FAILED_RETRYABLE: "failed-retryable",
+    }.get(result.status, result.status.value)
 
 
 def run_full_automation(
@@ -305,8 +315,20 @@ def run_full_automation(
     worker_count: int | None = None,
     use_ai: bool = True,
     log: LogFn | None = None,
+    ai_policy: AiPolicy | str | None = None,
+    mode: RunMode | str | None = None,
 ) -> dict[str, Any]:
     """Search, create accounts when required, and fill applications in parallel."""
+    selected_ai_policy = AiPolicy.parse(ai_policy)
+    selected_mode = RunMode.parse(mode)
+    if request.submission_policy == "auto-submit":
+        return {
+            "status": OutcomeStatus.SUBMISSION_DISABLED.value,
+            "submission_policy": request.submission_policy,
+            "worker_count": 0,
+            "results": [],
+            "detail": "Automated final submission is disabled; no browser was opened.",
+        }
     missing = missing_application_details(
         profile,
         cv_path,
@@ -316,7 +338,7 @@ def run_full_automation(
     )
     if missing:
         return {
-            "status": "needs_information",
+            "status": OutcomeStatus.NEEDS_INFORMATION.value,
             "submission_policy": request.submission_policy,
             "worker_count": 0,
             "results": [],
@@ -326,7 +348,16 @@ def run_full_automation(
     history_path = ROOT / "data" / "applied_history.json"
     applied_history = load_applied_urls(history_path)
     ledger = ApplicationLedger(Path(output_dir) / "application_ledger.json")
-    skip_urls = applied_history | ledger.skip_urls()
+    try:
+        skip_urls = applied_history | ledger.skip_urls()
+    except LedgerCorruptionError as exc:
+        return {
+            "status": OutcomeStatus.NEEDS_INFORMATION.value,
+            "submission_policy": request.submission_policy,
+            "worker_count": 0,
+            "results": [],
+            "detail": f"{exc}. Reconcile or repair it before retrying.",
+        }
     discovery_limit = min(max(request.max_applications * 5, 20), 60)
     candidates = discover_linkedin_job_urls(
         request,
@@ -337,7 +368,7 @@ def run_full_automation(
     )
     if not candidates:
         return {
-            "status": "needs_user_attention",
+            "status": OutcomeStatus.NEEDS_INFORMATION.value,
             "submission_policy": request.submission_policy,
             "worker_count": 0,
             "results": [],
@@ -350,12 +381,16 @@ def run_full_automation(
     )
     verifier = GmailBrowserVerifier()
     results: list[ApplyResult] = []
-    completed_count = 0
+    prepared_count = 0
     candidate_index = 0
-    ready_statuses = {"applied", "needs_review"}
+    ready_statuses = {
+        OutcomeStatus.SUBMITTED_CONFIRMED,
+        OutcomeStatus.REVIEW_READY,
+        OutcomeStatus.PREVIEW_READY,
+    }
 
-    while candidate_index < len(candidates) and completed_count < request.max_applications:
-        remaining = request.max_applications - completed_count
+    while candidate_index < len(candidates) and prepared_count < request.max_applications:
+        remaining = request.max_applications - prepared_count
         wave_size = min(workers, remaining, len(candidates) - candidate_index)
         wave = candidates[candidate_index : candidate_index + wave_size]
         candidate_index += wave_size
@@ -382,6 +417,8 @@ def run_full_automation(
                     cv_path=cv_path,
                     use_ai=use_ai,
                     verifier=verifier,
+                    ai_policy=selected_ai_policy,
+                    mode=selected_mode,
                 ): url
                 for url in wave
             }
@@ -403,33 +440,38 @@ def run_full_automation(
                 submission_policy=request.submission_policy,
             )
             if result.status in ready_statuses:
-                completed_count += 1
+                prepared_count += 1
 
     applied_history.update(
-        normalize_job_url(result.url) for result in results if result.status == "applied"
+        normalize_job_url(result.url)
+        for result in results
+        if result.status == OutcomeStatus.SUBMITTED_CONFIRMED
     )
     save_applied_urls(history_path, applied_history)
-    public_results = [asdict(result) for result in results]
+    public_results = [result.to_dict() for result in results]
     append_needs_review_queue(output_dir, public_results)
     counts: dict[str, int] = {}
     for result in results:
-        counts[result.status] = counts.get(result.status, 0) + 1
-    target_reached = completed_count >= request.max_applications
-    submission_attention = (
-        request.submission_policy == "auto-submit"
-        and any(result.status == "needs_review" for result in results)
-    )
-    overall_status = (
-        "complete"
-        if target_reached and not submission_attention
-        else "needs_user_attention"
-    )
+        key = result.status.value
+        counts[key] = counts.get(key, 0) + 1
+    target_reached = prepared_count >= request.max_applications
+    submitted_count = counts.get(OutcomeStatus.SUBMITTED_CONFIRMED.value, 0)
+    if not target_reached:
+        overall_status = OutcomeStatus.NEEDS_INFORMATION.value
+    elif selected_mode == RunMode.LOCAL_PREVIEW:
+        overall_status = OutcomeStatus.PREVIEW_READY.value
+    else:
+        overall_status = OutcomeStatus.REVIEW_READY.value
     return {
         "status": overall_status,
         "submission_policy": request.submission_policy,
         "worker_count": workers,
         "requested": request.max_applications,
-        "completed": completed_count,
+        "prepared": prepared_count,
+        "review_ready": counts.get(OutcomeStatus.REVIEW_READY.value, 0),
+        "preview_ready": counts.get(OutcomeStatus.PREVIEW_READY.value, 0),
+        "submitted_confirmed": submitted_count,
+        "completed": submitted_count,
         "discovered": len(candidates),
         "searched": len(results),
         "counts": counts,

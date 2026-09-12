@@ -6,6 +6,15 @@ Keeps Chromium open. PINGs on missing info. Never closes browser.
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import json
 import sys
 import time
@@ -117,20 +126,8 @@ def main() -> None:
             msg = f"PING: still need login/signup on {job['company']} — {snap.get('url')}"
             print(f"  *** {msg} ***", flush=True)
             pings.append(msg)
-            results.append({**job, "status": "needs_signup", "url": page.url})
+            results.append({**job, "status": "needs-authentication", "url": page.url})
             continue
-
-        # Prefer Apply / Start application if on job landing page
-        for label in ("Apply Now", "Apply now", "Apply", "Start application", "Continue"):
-            btn = page.locator(f"button:has-text('{label}'), a:has-text('{label}')").first
-            try:
-                if btn.count() and btn.is_visible(timeout=800):
-                    btn.click(timeout=4000)
-                    page.wait_for_timeout(1500)
-                    print(f"  Clicked '{label}'", flush=True)
-                    break
-            except Exception:
-                pass
 
         detail = fill_generic_application_form(
             page,
@@ -144,18 +141,18 @@ def main() -> None:
             dry_run=False,
             log=lambda m: print(f"  {m}", flush=True),
         )
-        print(f"  → {detail}", flush=True)
-        status = "applied" if "submitted" in detail else (
-            "needs_signup" if "needs_signup" in detail else "needs_info"
-        )
-        if status != "applied":
+        print(f"  → {detail.to_dict()}", flush=True)
+        status = detail.status.value
+        if status != "review-ready":
             ping = (
-                f"PING: {job['company']} — {detail}. "
+                f"PING: {job['company']} — {detail.detail}. "
                 f"Tell me any missing answers (or finish submit in that tab)."
             )
             print(f"  *** {ping} ***", flush=True)
             pings.append(ping)
-        results.append({**job, "status": status, "detail": detail, "url": page.url})
+        results.append(
+            {**job, **detail.to_dict(), "url": page.url}
+        )
         time.sleep(1)
 
     out = Path(cfg["output_dir"]) / "external_fill_results.json"
@@ -170,7 +167,7 @@ def main() -> None:
             print(f"  • {p}", flush=True)
         print("Reply in chat with the missing details; I will update your profile and continue.", flush=True)
     else:
-        print("All three advanced/submitted where possible.", flush=True)
+        print("All applications reached their safest available review state.", flush=True)
     print("\nWorker done. Chromium kept open by open_browser.py (owner).", flush=True)
     print("Say 'finish all tasks' only when you want Chromium closed.", flush=True)
     # Do NOT close context — we are CDP-attached; closing would kill the shared browser.

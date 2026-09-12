@@ -11,34 +11,43 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .application_models import AiPolicy, OutcomeStatus, RunMode
 from .application_flow import missing_academic_details, missing_application_details
 from .browser_session import CDP_URL
 from .external_apply import fill_generic_application_form
 
 MAX_APPLICATION_WORKERS = 10
 MAX_APPLICATIONS_PER_BATCH = 10
-REVIEW_READY_STATUS = "ready_for_manual_review"
+REVIEW_READY_STATUS = OutcomeStatus.REVIEW_READY.value
 
 
 def _portfolio_completion_fields(
-    rows: list[dict[str, Any]], *, running: bool
+    rows: list[dict[str, Any]],
+    *,
+    running: bool,
+    expected_status: str = REVIEW_READY_STATUS,
 ) -> dict[str, Any]:
     """Describe portfolio completion without treating partial work as finished."""
     incomplete_ids = [
         str(row["task_id"])
         for row in rows
-        if row.get("status") != REVIEW_READY_STATUS
+        if row.get("status") != expected_status
     ]
     if running:
         portfolio_status = "running"
     elif incomplete_ids:
         portfolio_status = "incomplete"
     else:
-        portfolio_status = REVIEW_READY_STATUS
+        portfolio_status = expected_status
     return {
         "portfolio_status": portfolio_status,
-        "completion_definition": "all_applications_ready_for_manual_review",
-        "review_ready_count": len(rows) - len(incomplete_ids),
+        "completion_definition": f"all_applications_{expected_status}",
+        "review_ready_count": sum(
+            1 for row in rows if row.get("status") == OutcomeStatus.REVIEW_READY.value
+        ),
+        "preview_ready_count": sum(
+            1 for row in rows if row.get("status") == OutcomeStatus.PREVIEW_READY.value
+        ),
         "incomplete_application_ids": incomplete_ids,
     }
 
@@ -53,7 +62,9 @@ def resolve_worker_count(application_count: int, requested_workers: int | None) 
         )
     if requested_workers is None:
         requested_workers = application_count
-    return max(1, min(int(requested_workers), MAX_APPLICATION_WORKERS, application_count))
+    if type(requested_workers) is not int or not 1 <= requested_workers <= MAX_APPLICATION_WORKERS:
+        raise ValueError("workers must be an integer from 1 to 10")
+    return min(requested_workers, application_count)
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,7 @@ class ApplicationTask:
     portal_questions: str = ""
     cv_path: str = ""
     allow_ai: bool = False
+    ai_policy: AiPolicy = AiPolicy.UNKNOWN
     intake_confirmed: bool = False
     ai_policy_confirmed: bool = False
     manual_submit_confirmed: bool = False
@@ -77,6 +89,14 @@ class ApplicationTask:
     def from_mapping(cls, value: dict[str, Any], index: int) -> "ApplicationTask":
         if not isinstance(value, dict):
             raise ValueError(f"Application #{index + 1} must be a JSON object.")
+        if "ai_policy" in value:
+            ai_policy = AiPolicy.parse(value.get("ai_policy"))
+        elif value.get("allow_ai") is True and value.get("ai_policy_confirmed") is True:
+            ai_policy = AiPolicy.ALLOWED
+        elif value.get("ai_policy_confirmed") is True:
+            ai_policy = AiPolicy.PROHIBITED
+        else:
+            ai_policy = AiPolicy.UNKNOWN
         return cls(
             task_id=str(value.get("id") or value.get("task_id") or "").strip(),
             application_type=str(value.get("application_type") or "other").strip().lower(),
@@ -89,6 +109,7 @@ class ApplicationTask:
             portal_questions=str(value.get("portal_questions") or "").strip(),
             cv_path=str(value.get("cv_path") or "").strip(),
             allow_ai=value.get("allow_ai") is True,
+            ai_policy=ai_policy,
             intake_confirmed=value.get("intake_confirmed") is True,
             ai_policy_confirmed=value.get("ai_policy_confirmed") is True,
             manual_submit_confirmed=value.get("manual_submit_confirmed") is True,
@@ -103,10 +124,27 @@ class ApplicationWorkerResult:
     status: str
     detail: str
     logs: tuple[str, ...] = ()
+    legacy_status: str | None = None
+    blockers: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
+    field_evidence: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        from .application_models import FillOutcome
+
+        canonical = OutcomeStatus.parse(self.status)
+        object.__setattr__(self, "status", canonical.value)
+        if self.legacy_status is None:
+            object.__setattr__(self, "legacy_status", FillOutcome(canonical).legacy_status)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["logs"] = list(self.logs)
+        data["blockers"] = list(self.blockers)
+        data["actions"] = list(self.actions)
+        data["field_evidence"] = list(self.field_evidence)
+        if self.legacy_status is None:
+            data.pop("legacy_status")
         return data
 
 
@@ -135,11 +173,14 @@ class ApplicationBatchRun:
         worker_count: int | None = None,
         use_ai: bool = False,
         worker_fn: Any | None = None,
+        mode: RunMode | str | None = None,
     ) -> None:
+        self.mode = RunMode.parse(mode)
         blockers = validate_application_batch(
             tasks,
             profile=profile,
             default_cv_path=default_cv_path,
+            mode=self.mode,
         )
         if blockers:
             raise BatchValidationError(blockers)
@@ -215,13 +256,27 @@ class ApplicationBatchRun:
             summary = {
                 "worker_count": self.worker_count,
                 "application_count": len(self.tasks),
-                "final_submission": "manual_only",
+                "final_submission": (
+                    "no_portal_changes"
+                    if self.mode == RunMode.LOCAL_PREVIEW
+                    else "manual_only"
+                ),
                 "running": self._running,
                 "cancel_requested": self._cancel.is_set(),
                 "counts": counts,
                 "results": rows,
             }
-            summary.update(_portfolio_completion_fields(rows, running=self._running))
+            summary.update(
+                _portfolio_completion_fields(
+                    rows,
+                    running=self._running,
+                    expected_status=(
+                        OutcomeStatus.PREVIEW_READY.value
+                        if self.mode == RunMode.LOCAL_PREVIEW
+                        else OutcomeStatus.REVIEW_READY.value
+                    ),
+                )
+            )
             return summary
 
     def _coordinate(self) -> None:
@@ -247,6 +302,7 @@ class ApplicationBatchRun:
                 defaults=self.defaults,
                 default_cv_path=self.default_cv_path,
                 use_ai=self.use_ai and task.allow_ai,
+                mode=self.mode,
             )
             futures[future] = task
             return True
@@ -275,7 +331,7 @@ class ApplicationBatchRun:
                                 task_id=task.task_id,
                                 company=task.company,
                                 role=task.role,
-                                status="failed",
+                            status=OutcomeStatus.FAILED_RETRYABLE.value,
                                 detail=f"Worker failed: {type(exc).__name__}",
                             )
                         with self._lock:
@@ -323,7 +379,9 @@ def application_task_blockers(
     *,
     profile: dict[str, Any],
     default_cv_path: str,
+    mode: RunMode | str | None = None,
 ) -> list[str]:
+    selected_mode = RunMode.parse(mode)
     cv_path = task.cv_path or default_cv_path
     blockers = missing_application_details(
         profile,
@@ -352,9 +410,7 @@ def application_task_blockers(
     )
     if not task.intake_confirmed:
         blockers.append("Confirm that all visible portal questions and limits were captured.")
-    if not task.ai_policy_confirmed:
-        blockers.append("Confirm that the employer's AI policy was checked.")
-    if not task.manual_submit_confirmed:
+    if selected_mode == RunMode.ASSISTED_REVIEW and not task.manual_submit_confirmed:
         blockers.append("Confirm that final review and submission will be completed manually.")
     return list(dict.fromkeys(blockers))
 
@@ -364,6 +420,7 @@ def validate_application_batch(
     *,
     profile: dict[str, Any],
     default_cv_path: str,
+    mode: RunMode | str | None = None,
 ) -> dict[str, list[str]]:
     blockers: dict[str, list[str]] = {}
     for task in tasks:
@@ -371,6 +428,7 @@ def validate_application_batch(
             task,
             profile=profile,
             default_cv_path=default_cv_path,
+            mode=mode,
         )
         if task_blockers:
             blockers[task.task_id] = task_blockers
@@ -384,6 +442,7 @@ def _run_application_worker(
     defaults: dict[str, Any],
     default_cv_path: str,
     use_ai: bool,
+    mode: RunMode | str | None = None,
 ) -> ApplicationWorkerResult:
     from playwright.sync_api import sync_playwright
 
@@ -423,29 +482,30 @@ def _run_application_worker(
                 job_context=job_context,
                 company=task.company,
                 role=task.role,
-                use_ai=use_ai,
-                dry_run=False,
+                use_ai=use_ai and task.ai_policy == AiPolicy.ALLOWED,
+                dry_run=RunMode.parse(mode) == RunMode.LOCAL_PREVIEW,
                 log=logs.append,
+                mode=RunMode.parse(mode),
+                ai_policy=task.ai_policy,
             )
-        status = "ready_for_manual_review"
-        if detail.startswith("needs_") or "login" in detail:
-            status = "needs_user_attention"
-        elif "error" in detail:
-            status = "failed"
         return ApplicationWorkerResult(
             task_id=task.task_id,
             company=task.company,
             role=task.role,
-            status=status,
-            detail=detail,
+            status=detail.status.value,
+            detail=detail.detail,
             logs=tuple(logs),
+            legacy_status=detail.legacy_status,
+            blockers=detail.blockers,
+            actions=detail.actions,
+            field_evidence=tuple(item.to_dict() for item in detail.field_evidence),
         )
     except Exception as exc:
         return ApplicationWorkerResult(
             task_id=task.task_id,
             company=task.company,
             role=task.role,
-            status="failed",
+            status=OutcomeStatus.FAILED_RETRYABLE.value,
             detail=f"{type(exc).__name__}: {exc}",
             logs=tuple(logs),
         )
@@ -459,11 +519,14 @@ def run_application_batch(
     default_cv_path: str,
     worker_count: int | None = None,
     use_ai: bool = False,
+    mode: RunMode | str | None = None,
 ) -> dict[str, Any]:
+    selected_mode = RunMode.parse(mode)
     blockers = validate_application_batch(
         tasks,
         profile=profile,
         default_cv_path=default_cv_path,
+        mode=selected_mode,
     )
     if blockers:
         raise BatchValidationError(blockers)
@@ -479,6 +542,7 @@ def run_application_batch(
                 defaults=defaults,
                 default_cv_path=default_cv_path,
                 use_ai=use_ai and task.allow_ai,
+                mode=selected_mode,
             ): task.task_id
             for task in tasks
         }
@@ -490,10 +554,18 @@ def run_application_batch(
     summary = {
         "worker_count": workers,
         "application_count": len(tasks),
-        "final_submission": "manual_only",
+        "final_submission": "no_portal_changes" if selected_mode == RunMode.LOCAL_PREVIEW else "manual_only",
         "results": [result.to_dict() for result in ordered_results],
     }
     summary.update(
-        _portfolio_completion_fields(summary["results"], running=False)
+        _portfolio_completion_fields(
+            summary["results"],
+            running=False,
+            expected_status=(
+                OutcomeStatus.PREVIEW_READY.value
+                if selected_mode == RunMode.LOCAL_PREVIEW
+                else OutcomeStatus.REVIEW_READY.value
+            ),
+        )
     )
     return summary

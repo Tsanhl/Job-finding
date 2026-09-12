@@ -3,6 +3,15 @@
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import sys
 from pathlib import Path
 
@@ -30,7 +39,6 @@ def main() -> None:
             user_data_dir=cfg["browser_data_dir"],
             headless=False,
             viewport={"width": 1400, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
         )
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(URLS[0], wait_until="domcontentloaded", timeout=90000)

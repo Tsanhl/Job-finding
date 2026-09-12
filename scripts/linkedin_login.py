@@ -31,7 +31,6 @@ def main() -> None:
             user_data_dir=cfg["browser_data_dir"],
             headless=False,
             viewport={"width": 1400, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
         )
         page = context.pages[0] if context.pages else context.new_page()
         try:

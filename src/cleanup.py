@@ -52,7 +52,7 @@ def merge_applied_from_summary(summary: dict[str, Any], history_path: Path) -> s
     urls = load_applied_urls(history_path)
     for r in summary.get("results", []):
         status = r.get("status")
-        if status in {"applied", "skipped"} and r.get("url"):
+        if status in {"submitted-confirmed", "applied"} and r.get("url"):
             urls.add(normalize_job_url(r["url"]))
     save_applied_urls(history_path, urls)
     return urls
@@ -61,15 +61,20 @@ def merge_applied_from_summary(summary: dict[str, Any], history_path: Path) -> s
 def sanitize_summary_for_disk(summary: dict[str, Any]) -> dict[str, Any]:
     """Keep title/url/status/detail; drop company for repo cleanliness."""
     clean = dict(summary)
-    clean["results"] = [
-        {
-            "title": r.get("title", ""),
-            "url": normalize_job_url(r.get("url", "")),
-            "status": r.get("status", ""),
-            "detail": r.get("detail", ""),
+    clean["results"] = []
+    for result in summary.get("results", []):
+        sanitized = {
+            "title": result.get("title", ""),
+            "url": normalize_job_url(result.get("url", "")),
+            "status": result.get("status", ""),
+            "detail": result.get("detail", ""),
+            "blockers": list(result.get("blockers") or []),
+            "actions": list(result.get("actions") or []),
+            "field_evidence": list(result.get("field_evidence") or []),
         }
-        for r in summary.get("results", [])
-    ]
+        if result.get("legacy_status"):
+            sanitized["legacy_status"] = result["legacy_status"]
+        clean["results"].append(sanitized)
     return clean
 
 
@@ -89,9 +94,29 @@ def append_needs_review_queue(output_dir: str | Path, results: list[dict[str, An
         if not r.get("url"):
             continue
         normalized = normalize_job_url(r["url"])
-        if r.get("status") in {"applied", "skipped", "dry_run"}:
+        if r.get("status") in {
+            "submitted-confirmed",
+            "preview-ready",
+            "skipped-unsuitable",
+            "applied",
+            "skipped",
+            "dry_run",
+        }:
             by_url.pop(normalized, None)
-        elif r.get("status") in {"needs_review", "needs_info", "needs_signup", "error"}:
+        elif r.get("status") in {
+            "review-ready",
+            "needs-information",
+            "needs-authentication",
+            "policy-blocked",
+            "unsupported",
+            "failed-retryable",
+            "submission-disabled",
+            "submission-unconfirmed",
+            "needs_review",
+            "needs_info",
+            "needs_signup",
+            "error",
+        }:
             by_url[normalized] = {
                 "url": normalize_job_url(r["url"]),
                 "title": r.get("title", ""),

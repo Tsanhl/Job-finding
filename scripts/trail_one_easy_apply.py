@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """
-Trail ONE Easy Apply end-to-end: click → fill → Next… → Submit.
+Trail ONE Easy Apply safely: click → fill → verified progress → manual review.
 Verbose logs. Leaves Chromium open. Stops + PINGs if a field is unknown.
 """
 
 from __future__ import annotations
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
 
 import sys
 from pathlib import Path
@@ -89,13 +98,8 @@ def main() -> None:
             try:
                 btn.click(timeout=5000)
             except Exception as e:
-                print(f"  click failed ({e}); dismissing overlays & retry", flush=True)
-                _dismiss_modals(page)
-                try:
-                    btn.click(timeout=5000, force=True)
-                except Exception as e2:
-                    print(f"  still failed: {e2}", flush=True)
-                    continue
+                print(f"  entry control click failed safely: {e}", flush=True)
+                continue
             page.wait_for_timeout(1500)
             if _easy_apply_modal(page).count() == 0:
                 print("  modal did not open — next", flush=True)
@@ -104,7 +108,7 @@ def main() -> None:
             title = _safe_text(page, "h1")
             company = _safe_text(page, ".job-details-jobs-unified-top-card__company-name")
             print(f"  modal open — {title} @ {company}", flush=True)
-            print("  Running full wizard: fill → Next → … → Submit", flush=True)
+            print("  Running safe wizard: fill → verified progress → manual review", flush=True)
 
             result = complete_easy_apply(
                 page,
@@ -120,11 +124,11 @@ def main() -> None:
                 log=lambda m: print(f"  {m}", flush=True),
             )
             print(f"\n=== RESULT: [{result.status}] {result.detail} ===", flush=True)
-            if result.status == "applied":
+            if result.status == "review-ready":
                 skip.add(href)
                 save_applied_urls(CFG_ROOT / "data" / "applied_history.json", skip)
-                print("SUCCESS — application submitted.", flush=True)
-            elif result.status == "needs_info":
+                print("READY — review and submit the application manually.", flush=True)
+            elif result.status == "needs-information":
                 print(
                     "\n*** PING: fill the open modal or tell me the answer, then say continue apply ***\n",
                     flush=True,

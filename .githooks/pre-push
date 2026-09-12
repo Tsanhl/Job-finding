@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if [ -x .venv-upgrade/bin/python ]; then
+  exec .venv-upgrade/bin/python scripts/privacy_gate.py
+fi
+if [ -x .venv/bin/python ]; then
+  exec .venv/bin/python scripts/privacy_gate.py
+fi
+exec python3 scripts/privacy_gate.py

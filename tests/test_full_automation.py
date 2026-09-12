@@ -35,6 +35,50 @@ def complete_profile() -> dict:
 
 
 class FullAutomationTests(unittest.TestCase):
+    def test_auto_submit_is_disabled_before_discovery(self) -> None:
+        request = FullAutomationRequest.from_mapping(
+            {
+                "keywords": ["graduate"],
+                "locations": ["London"],
+                "submission_policy": "auto-submit",
+            }
+        )
+        with patch("src.full_automation.discover_linkedin_job_urls") as discover:
+            result = run_full_automation(
+                request,
+                credentials=None,
+                profile={},
+                defaults={},
+                cv_path="/tmp/cv.pdf",
+                browser_data_dir="/tmp/browser",
+                output_dir="/tmp/output",
+            )
+        discover.assert_not_called()
+        self.assertEqual(result["status"], "submission-disabled")
+
+    def test_corrupt_ledger_blocks_discovery(self) -> None:
+        request = FullAutomationRequest.from_mapping(
+            {"keywords": ["graduate"], "locations": ["London"]}
+        )
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as cv, tempfile.TemporaryDirectory() as out:
+            with open(f"{out}/application_ledger.json", "w", encoding="utf-8") as ledger:
+                ledger.write("not-json")
+            with (
+                patch("src.full_automation.load_applied_urls", return_value=set()),
+                patch("src.full_automation.discover_linkedin_job_urls") as discover,
+            ):
+                result = run_full_automation(
+                    request,
+                    credentials=None,
+                    profile=complete_profile(),
+                    defaults={},
+                    cv_path=cv.name,
+                    browser_data_dir="unused",
+                    output_dir=out,
+                )
+        discover.assert_not_called()
+        self.assertEqual(result["status"], "needs-information")
+
     def test_request_requires_explicit_submission_policy(self) -> None:
         request = FullAutomationRequest.from_mapping(
             {
@@ -305,9 +349,12 @@ class FullAutomationTests(unittest.TestCase):
                     use_ai=False,
                 )
 
-        self.assertEqual(summary["completed"], 3)
+        self.assertEqual(summary["prepared"], 3)
+        self.assertEqual(summary["review_ready"], 3)
+        self.assertEqual(summary["completed"], 0)
         self.assertEqual(summary["searched"], 5)
-        self.assertEqual(summary["status"], "complete")
+        self.assertEqual(summary["status"], "review-ready")
+        self.assertEqual(summary["counts"]["skipped-unsuitable"], 2)
 
 
 if __name__ == "__main__":

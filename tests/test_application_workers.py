@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.application_models import AiPolicy
 from src.application_workers import (
     ApplicationBatchRun,
     ApplicationTask,
@@ -44,6 +45,7 @@ class ApplicationWorkerTests(unittest.TestCase):
                 role=f"Role {index}",
                 url=f"https://example.com/{index}",
                 allow_ai=index == 0,
+                ai_policy=(AiPolicy.ALLOWED if index == 0 else AiPolicy.PROHIBITED),
                 intake_confirmed=True,
                 ai_policy_confirmed=True,
                 manual_submit_confirmed=True,
@@ -97,6 +99,23 @@ class ApplicationWorkerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_application_tasks(path)
 
+    def test_legacy_ai_flags_fail_closed_until_policy_is_confirmed(self) -> None:
+        unconfirmed = ApplicationTask.from_mapping(
+            {"id": "one", "allow_ai": True},
+            0,
+        )
+        confirmed = ApplicationTask.from_mapping(
+            {"id": "two", "allow_ai": True, "ai_policy_confirmed": True},
+            1,
+        )
+        explicit = ApplicationTask.from_mapping(
+            {"id": "three", "allow_ai": True, "ai_policy": "prohibited"},
+            2,
+        )
+        self.assertEqual(unconfirmed.ai_policy, AiPolicy.UNKNOWN)
+        self.assertEqual(confirmed.ai_policy, AiPolicy.ALLOWED)
+        self.assertEqual(explicit.ai_policy, AiPolicy.PROHIBITED)
+
     def test_each_task_requires_its_own_confirmations(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".pdf") as cv:
             task = ApplicationTask(
@@ -113,8 +132,26 @@ class ApplicationWorkerTests(unittest.TestCase):
             )
         combined = " ".join(blockers).lower()
         self.assertIn("portal questions", combined)
-        self.assertIn("ai policy", combined)
+        self.assertNotIn("ai policy", combined)
         self.assertIn("submission", combined)
+
+    def test_local_preview_does_not_require_manual_submission_confirmation(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as cv:
+            task = ApplicationTask(
+                task_id="preview",
+                application_type="other",
+                company="Example",
+                role="Example Role",
+                url="https://example.com/apply",
+                intake_confirmed=True,
+            )
+            blockers = application_task_blockers(
+                task,
+                profile=complete_profile(),
+                default_cv_path=cv.name,
+                mode="local-preview",
+            )
+        self.assertFalse(any("submission" in blocker.lower() for blocker in blockers))
 
     def test_batch_passes_without_unrequested_academic_data(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".pdf") as cv:
@@ -211,7 +248,7 @@ class ApplicationWorkerTests(unittest.TestCase):
         self.assertTrue(observed_ai["task-0"])
         self.assertTrue(all(not observed_ai[f"task-{index}"] for index in range(1, 10)))
         self.assertEqual(summary["final_submission"], "manual_only")
-        self.assertEqual(summary["portfolio_status"], "ready_for_manual_review")
+        self.assertEqual(summary["portfolio_status"], "review-ready")
         self.assertEqual(summary["incomplete_application_ids"], [])
 
     def test_queue_file_accepts_at_most_ten_applications(self) -> None:
@@ -269,8 +306,8 @@ class ApplicationWorkerTests(unittest.TestCase):
 
         final = run.snapshot()
         self.assertFalse(final["running"])
-        self.assertEqual(final["counts"], {"ready_for_manual_review": 5})
-        self.assertEqual(final["portfolio_status"], "ready_for_manual_review")
+        self.assertEqual(final["counts"], {"review-ready": 5})
+        self.assertEqual(final["portfolio_status"], "review-ready")
         self.assertEqual(final["review_ready_count"], 5)
         self.assertEqual(maximum_active, 3)
 
@@ -313,7 +350,7 @@ class ApplicationWorkerTests(unittest.TestCase):
         self.assertFalse(final["running"])
         self.assertEqual(len(started), 2)
         self.assertEqual(final["counts"].get("cancelled"), 3)
-        self.assertEqual(final["counts"].get("ready_for_manual_review"), 2)
+        self.assertEqual(final["counts"].get("review-ready"), 2)
         self.assertEqual(final["portfolio_status"], "incomplete")
         self.assertEqual(len(final["incomplete_application_ids"]), 3)
 

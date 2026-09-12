@@ -119,7 +119,8 @@ GENERIC_ADAPTER = AtsAdapter(
     input_selector=_COMMON_INPUTS,
     select_selector="select",
     submit_selector=_COMMON_SUBMIT,
-    progress_labels=("Next", "Continue", "Save and continue", "Review"),
+    # Unknown portals do not get ambiguous Continue/Apply actions.
+    progress_labels=("Next", "Review"),
 )
 
 

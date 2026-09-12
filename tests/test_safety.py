@@ -56,6 +56,12 @@ class SafetyFlowTests(unittest.TestCase):
             "",
         )
 
+    def test_demographic_choice_is_not_inferred(self) -> None:
+        self.assertEqual(
+            answer_question("What is your gender?", {}, use_ai=False),
+            "",
+        )
+
     def test_law_direct_apply_always_asks_full_intake(self) -> None:
         questions = direct_application_intake_questions(
             {},

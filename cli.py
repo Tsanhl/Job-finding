@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 from dataclasses import replace
 from pathlib import Path
 
-from src.account_automation import PortalCredentialManager
 from src.answers import answer_many
 from src.application_flow import (
     direct_application_intake_questions,
@@ -15,6 +13,7 @@ from src.application_flow import (
     missing_application_details,
     readiness_message,
 )
+from src.application_models import AiPolicy, RunMode
 from src.application_workers import (
     load_application_tasks,
     run_application_batch,
@@ -34,6 +33,11 @@ from src.profile import load_profile
 
 
 def main() -> None:
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "runtime":
+        from src.pilot.cli import main as runtime_main
+        runtime_main(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description="ApplyPilot — job application automation")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -52,7 +56,21 @@ def main() -> None:
     p_li.add_argument("--keywords", required=True)
     p_li.add_argument("--location", default="United Kingdom")
     p_li.add_argument("--max", type=int, default=5)
-    p_li.add_argument("--submit", action="store_true", help="Actually submit (default is dry-run)")
+    p_li.add_argument(
+        "--submit",
+        action="store_true",
+        help="Legacy flag: returns submission-disabled without opening the browser",
+    )
+    p_li.add_argument(
+        "--mode",
+        choices=("local-preview", "assisted-review"),
+        default="local-preview",
+    )
+    p_li.add_argument(
+        "--ai-policy",
+        choices=("unknown", "allowed", "prohibited"),
+        default="unknown",
+    )
     p_li.add_argument(
         "--confirm",
         action="store_true",
@@ -77,10 +95,20 @@ def main() -> None:
     p_ext.add_argument("--job-description-file", default="")
     p_ext.add_argument("--confirm", action="store_true")
     p_ext.add_argument("--no-ai", action="store_true")
+    p_ext.add_argument(
+        "--mode",
+        choices=("local-preview", "assisted-review"),
+        default="assisted-review",
+    )
+    p_ext.add_argument(
+        "--ai-policy",
+        choices=("unknown", "allowed", "prohibited"),
+        default="unknown",
+    )
 
     p_batch = sub.add_parser(
         "batch",
-        help="Prepare multiple direct applications with isolated local workers",
+        help="Prepare multiple direct applications in separate tabs of a shared browser context",
     )
     p_batch.add_argument("--applications-file", required=True)
     p_batch.add_argument(
@@ -91,6 +119,11 @@ def main() -> None:
     )
     p_batch.add_argument("--confirm", action="store_true")
     p_batch.add_argument("--no-ai", action="store_true")
+    p_batch.add_argument(
+        "--mode",
+        choices=("local-preview", "assisted-review"),
+        default="assisted-review",
+    )
 
     p_full = sub.add_parser(
         "full-auto",
@@ -106,8 +139,20 @@ def main() -> None:
     p_full.add_argument("--accept-required-terms", action="store_true")
     p_full.add_argument("--confirm", action="store_true")
     p_full.add_argument("--no-ai", action="store_true")
+    p_full.add_argument(
+        "--mode",
+        choices=("local-preview", "assisted-review"),
+        default="assisted-review",
+    )
+    p_full.add_argument(
+        "--ai-policy",
+        choices=("unknown", "allowed", "prohibited"),
+        default="unknown",
+    )
 
     args = parser.parse_args()
+    if args.cmd in {"linkedin", "external", "batch", "full-auto"}:
+        parser.error("Application execution now uses the shared runtime: cli.py runtime run --plan reviewed-plan.json")
     cfg = load_config()
     ensure_dirs(cfg)
     profile = load_profile()
@@ -152,6 +197,13 @@ def main() -> None:
             print(f"Q: {q}\nA: {a}\n")
 
     elif args.cmd == "linkedin":
+        if args.submit:
+            print(
+                "submission-disabled: automated final submission is disabled; "
+                "no browser was opened"
+            )
+            return
+        ai_policy = AiPolicy.PROHIBITED if args.no_ai else AiPolicy.parse(args.ai_policy)
         missing = missing_application_details(
             profile,
             cfg["cv_path"],
@@ -175,15 +227,18 @@ def main() -> None:
             delay_seconds=float(cfg.get("linkedin", {}).get("delay_seconds_between_apps", 8)),
             easy_apply_only=True,
             headless=False,
-            dry_run=not args.submit,
-            use_ai=not args.no_ai,
+            dry_run=args.mode == "local-preview",
+            use_ai=ai_policy == AiPolicy.ALLOWED,
             defaults=defaults,
             profile=profile,
             output_dir=cfg["output_dir"],
+            mode=RunMode.parse(args.mode),
+            ai_policy=ai_policy,
         )
         print(summary.to_dict())
 
     elif args.cmd == "external":
+        ai_policy = AiPolicy.PROHIBITED if args.no_ai else AiPolicy.parse(args.ai_policy)
         portal_questions = (
             Path(args.questions_file).read_text(encoding="utf-8")
             if args.questions_file
@@ -243,11 +298,13 @@ def main() -> None:
             ),
             company=args.company,
             role=args.role,
-            use_ai=not args.no_ai,
-            dry_run=False,
+            use_ai=ai_policy == AiPolicy.ALLOWED,
+            dry_run=args.mode == "local-preview",
             log=print,
+            mode=RunMode.parse(args.mode),
+            ai_policy=ai_policy,
         )
-        print(detail)
+        print(json.dumps(detail.to_dict(), indent=2, ensure_ascii=False))
 
     elif args.cmd == "batch":
         tasks = load_application_tasks(args.applications_file)
@@ -255,6 +312,7 @@ def main() -> None:
             tasks,
             profile=profile,
             default_cv_path=cfg["cv_path"],
+            mode=RunMode.parse(args.mode),
         )
         if blockers:
             print("Batch intake is incomplete:")
@@ -275,6 +333,7 @@ def main() -> None:
             default_cv_path=cfg["cv_path"],
             worker_count=args.workers,
             use_ai=not args.no_ai,
+            mode=RunMode.parse(args.mode),
         )
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
@@ -313,10 +372,6 @@ def main() -> None:
                 or "review"
             )
             accept_terms = False
-            if policy_value == "auto-submit":
-                accept_terms = input(
-                    "Allow required employer terms/privacy checkboxes? [y/N]: "
-                ).strip().lower() in {"y", "yes"}
             request = FullAutomationRequest.from_mapping(
                 {
                     "keywords": list(keywords),
@@ -336,33 +391,31 @@ def main() -> None:
             request = replace(request, accept_required_terms=True)
         print("Full-automation request:")
         print(json.dumps(request.public_dict(), indent=2, ensure_ascii=False))
-        if not args.confirm:
+        if request.submission_policy == "auto-submit":
             print(
-                "Re-run with --confirm to provide the application email, choose the "
-                "employer-credential mode, and start the workers."
+                "submission-disabled: automated final submission is disabled; "
+                "no browser was opened"
             )
+            return
+        if not args.confirm:
+            if args.mode == "local-preview":
+                print("Re-run with --confirm to inspect matching applications without portal changes.")
+            else:
+                print(
+                    "Re-run with --confirm to provide the application email, choose the "
+                    "employer-credential mode, and start the assisted-review workers."
+                )
             return
 
         profile_email = str(profile.get("email") or "").strip()
-        email = input(f"Application email [{profile_email}]: ").strip() or profile_email
-        unique_credentials = input(
-            "Generate a unique password for each employer and save it to macOS Keychain? [Y/n]: "
-        ).strip().lower() not in {"n", "no"}
-        if unique_credentials:
-            credentials = PortalCredentialManager(
-                email=email,
-                generate_unique=True,
-                save_to_keychain=True,
-            )
-        else:
-            password = getpass.getpass(
-                "Shared employer-portal password (hidden; not saved): "
-            )
-            credentials = PortalCredentialManager(
-                email=email,
-                shared_password=password,
-                generate_unique=False,
-                save_to_keychain=False,
+        email = profile_email
+        credentials = None
+        if args.mode == "assisted-review":
+            email = input(f"Application email [{profile_email}]: ").strip() or profile_email
+            print(
+                "Create accounts, enter passwords and complete verification yourself "
+                "in the managed browser. The application will pause and resume without "
+                "reading or storing the password."
             )
         run_profile = dict(profile)
         run_profile["email"] = email
@@ -375,8 +428,14 @@ def main() -> None:
             browser_data_dir=cfg["browser_data_dir"],
             output_dir=cfg["output_dir"],
             worker_count=args.workers,
-            use_ai=not args.no_ai,
+            use_ai=(
+                not args.no_ai and AiPolicy.parse(args.ai_policy) == AiPolicy.ALLOWED
+            ),
             log=print,
+            ai_policy=(
+                AiPolicy.PROHIBITED if args.no_ai else AiPolicy.parse(args.ai_policy)
+            ),
+            mode=RunMode.parse(args.mode),
         )
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 

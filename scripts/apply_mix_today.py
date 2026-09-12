@@ -6,6 +6,15 @@ Keeps Chromium open until user says: finish all tasks
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from src.pilot.legacy import main as runtime_entry
+    runtime_entry()
+    raise SystemExit(0)
+
+
 import json
 import sys
 import time
@@ -194,7 +203,7 @@ def main() -> None:
                     "div.jobs-easy-apply-content, div[aria-labelledby*='jobs-apply']"
                 )
                 if modal.count() > 0:
-                    print("  Easy Apply modal open — filling + Next + Submit…", flush=True)
+                    print("  Easy Apply modal open — filling to manual review…", flush=True)
                     result = complete_easy_apply(
                         page,
                         profile=prof,
@@ -243,10 +252,10 @@ def main() -> None:
                         "location": location,
                     }
                 )
-                if result.status == "applied":
+                if result.status == "review-ready":
                     skip.add(href)
                     easy_done += 1
-                elif result.status == "needs_info":
+                elif result.status == "needs-information":
                     print(
                         "\n*** PING: NEED YOUR INPUT ***\n"
                         f"Job: {result.title} @ {result.company}\n"
@@ -260,7 +269,7 @@ def main() -> None:
                     paused_for_info = True
                     break
                 else:
-                    # needs_review / error — record but don't silently lose the chance forever
+                    # Other blocked/error states remain available for explicit review.
                     skip.add(href)
                 # Close Easy Apply leftovers only — never touch company ATS tabs
                 if not paused_for_info:
@@ -276,9 +285,9 @@ def main() -> None:
         if paused_for_info:
             break
 
-    print(f"\nEasy Apply submitted: {easy_done}/{easy_target}", flush=True)
+    print(f"\nEasy Apply review-ready: {easy_done}/{easy_target}", flush=True)
     if easy_done == 0:
-        print("NOTE: No Easy Apply submissions succeeded in searched lists.", flush=True)
+        print("NOTE: No Easy Apply forms reached review-ready state.", flush=True)
 
     # ---- Open 3 externals (tabs STAY open for signup) ----
     external_done = 0
@@ -380,7 +389,7 @@ def main() -> None:
     )
 
     print("\n=== STOPPED — WAITING FOR YOU ===", flush=True)
-    print(f"Easy Apply submitted: {easy_done}/{easy_target}", flush=True)
+    print(f"Easy Apply review-ready: {easy_done}/{easy_target}", flush=True)
     print(f"External tabs opened: {external_done}/{external_target}", flush=True)
     for r in opened:
         print(

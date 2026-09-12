@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .field_manifest import FieldKind, classify_field
+
 
 AI_RESTRICTION_PATTERNS = (
     r"(?:must|may)\s+not\s+(?:use|be written with).{0,50}(?:generative\s+)?ai",
@@ -45,6 +47,11 @@ class VerificationReport:
 def ai_rewrite_required(text: str, *, use_ai: bool) -> bool:
     if not use_ai:
         return False
+    return ai_policy_prohibited(text)
+
+
+def ai_policy_prohibited(text: str) -> bool:
+    """Detect an explicit prohibition independently of the requested AI setting."""
     lowered = " ".join((text or "").lower().split())
     return any(re.search(pattern, lowered) for pattern in AI_RESTRICTION_PATTERNS)
 
@@ -121,6 +128,12 @@ def verify_application_ready(
     required_radio_groups: dict[str, list[dict[str, Any]]] = {}
     expected_email = str(profile.get("email") or "").strip().lower()
     expected_phone = _normalise_phone(str(profile.get("phone") or ""))
+    expected_names = {
+        FieldKind.FIRST_NAME: str(profile.get("first_name") or "").strip(),
+        FieldKind.MIDDLE_NAME: str(profile.get("middle_name") or "").strip(),
+        FieldKind.LAST_NAME: str(profile.get("last_name") or "").strip(),
+        FieldKind.FULL_NAME: str(profile.get("full_name") or "").strip(),
+    }
     checked_fields = 0
 
     for field in fields or []:
@@ -150,6 +163,17 @@ def verify_application_ready(
             blockers.append(f"Required field is empty: {label[:100]}")
 
         lowered_label = label.lower()
+        identity_kind = classify_field(
+            label,
+            field_id=str(field.get("name") or ""),
+            tag=str(field.get("tag") or "input"),
+            input_type=field_type,
+        )
+        expected_name = expected_names.get(identity_kind, "")
+        if expected_name and value and " ".join(value.split()).casefold() != " ".join(expected_name.split()).casefold():
+            blockers.append(
+                f"{identity_kind.value.replace('_', ' ').title()} does not match the verified profile"
+            )
         if expected_email and (field_type == "email" or "email" in lowered_label) and value:
             if value.lower() != expected_email:
                 blockers.append("Application email does not match the verified profile")

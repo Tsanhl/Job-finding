@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 
 from src.answers import answer_many
+from src.application_models import AiPolicy, RunMode
 from src.assessment_ui import assessment_panel
 from src.application_flow import (
     application_intake_questions,
@@ -54,6 +55,11 @@ def _parse_academic_rows(raw: str, keys: tuple[str, ...]) -> list[dict[str, str]
     return rows
 
 st.set_page_config(page_title="ApplyPilot", page_icon="📄", layout="wide")
+
+from src.pilot.ui import render as render_runtime
+render_runtime()
+st.stop()
+
 
 cfg = load_config()
 ensure_dirs(cfg)
@@ -365,7 +371,7 @@ with tabs[3]:
     st.subheader("LinkedIn Easy Apply (assisted)")
     st.info(
         "A Chromium window will open. Log into LinkedIn there if needed. "
-        "Start with **Dry run** (fills forms, does not submit)."
+        "Start with **local preview**, which inspects without changing portal fields."
     )
 
     d = cfg.get("defaults", {})
@@ -388,9 +394,17 @@ with tabs[3]:
             value=int(li.get("delay_seconds_between_apps", 8)),
         )
     with c3:
-        dry_run = st.checkbox("Dry run (do not submit)", value=True)
+        linkedin_mode = st.selectbox(
+            "Run mode",
+            options=["local-preview", "assisted-review"],
+            help="Local preview does not fill, upload, or advance portal controls.",
+        )
         easy_only = st.checkbox("Easy Apply only", value=bool(li.get("only_easy_apply", True)))
-        use_ai_li = st.checkbox("Use OpenAI while filling", value=True, key="ai_li")
+        linkedin_ai_policy = st.selectbox(
+            "Employer AI policy",
+            options=["unknown", "allowed", "prohibited"],
+            key="ai_li_policy",
+        )
         i_understand = st.checkbox(
             "I reviewed my details and will answer any paused/unknown fields",
             value=False,
@@ -421,8 +435,8 @@ with tabs[3]:
         ):
             st.write(f"- {question}")
     st.caption(
-        "Easy Apply can advance and submit only when explicitly enabled. External ATS pages "
-        "wait for login, fill safe known fields, and stop before final Submit."
+        "Automated final submission is disabled. Local preview makes no portal changes; "
+        "assisted review fills verified values and stops at final or ambiguous actions."
     )
     log_box = st.empty()
     logs: list[str] = []
@@ -449,12 +463,14 @@ with tabs[3]:
                     delay_seconds=float(delay),
                     easy_apply_only=easy_only,
                     headless=False,
-                    dry_run=dry_run,
-                    use_ai=use_ai_li,
+                    dry_run=linkedin_mode == "local-preview",
+                    use_ai=linkedin_ai_policy == "allowed",
                     defaults=d,
                     profile=profile,
                     output_dir=cfg["output_dir"],
                     log=_logger,
+                    mode=RunMode.parse(linkedin_mode),
+                    ai_policy=AiPolicy.parse(linkedin_ai_policy),
                 )
             st.success(f"Finished: {len(summary.results)} job(s) processed")
             st.json(summary.to_dict())
@@ -486,10 +502,15 @@ with tabs[4]:
         direct_office = st.text_input("Office / location", key="direct_office")
     with c3:
         direct_deadline = st.text_input("Deadline", key="direct_deadline")
-        direct_use_ai = st.checkbox(
-            "Use OpenAI only if the employer permits it",
-            value=False,
-            key="direct_use_ai",
+        direct_mode = st.selectbox(
+            "Run mode",
+            options=["assisted-review", "local-preview"],
+            key="direct_mode",
+        )
+        direct_ai_policy = st.selectbox(
+            "Employer AI policy",
+            options=["unknown", "allowed", "prohibited"],
+            key="direct_ai_policy",
         )
 
     direct_url = st.text_input("Official application URL", key="direct_url")
@@ -572,7 +593,7 @@ with tabs[4]:
         and questions_complete
         and facts_complete
         and policy_complete
-        and manual_submit
+        and (direct_mode == "local-preview" or manual_submit)
     )
     if st.button(
         "Open and fill direct application",
@@ -601,11 +622,14 @@ with tabs[4]:
                 job_context="\n".join(part for part in context_bits if part),
                 company=direct_company,
                 role=direct_role,
-                use_ai=direct_use_ai,
-                dry_run=False,
+                use_ai=direct_ai_policy == "allowed",
+                dry_run=direct_mode == "local-preview",
                 log=_direct_logger,
+                mode=RunMode.parse(direct_mode),
+                ai_policy=AiPolicy.parse(direct_ai_policy),
             )
-            st.success(detail)
+            st.success(detail.detail)
+            st.json(detail.to_dict())
         except Exception as exc:
             st.error(f"Direct application could not start: {exc}")
 
@@ -633,10 +657,10 @@ with tabs[5]:
             key="batch_workers",
         )
     with batch_c2:
-        batch_use_ai = st.checkbox(
-            "Use OpenAI only for applications whose checked policy permits it",
-            value=False,
-            key="batch_use_ai",
+        batch_mode = st.selectbox(
+            "Run mode",
+            options=["assisted-review", "local-preview"],
+            key="batch_mode",
         )
 
     batch_tasks = []
@@ -650,6 +674,7 @@ with tabs[5]:
                 batch_tasks,
                 profile=profile,
                 default_cv_path=cfg["cv_path"],
+                mode=RunMode.parse(batch_mode),
             )
         except ValueError as exc:
             batch_error = str(exc)
@@ -670,7 +695,7 @@ with tabs[5]:
             st.success("Every queued application passed its individual intake.")
 
     batch_confirmed = st.checkbox(
-        "Run the validated applications now; I will review and submit every tab manually",
+        "Run the validated applications in the selected safe mode",
         value=False,
         key="batch_confirmed",
     )
@@ -687,7 +712,8 @@ with tabs[5]:
                 defaults=dict(cfg.get("defaults", {})),
                 default_cv_path=cfg["cv_path"],
                 worker_count=int(batch_workers),
-                use_ai=batch_use_ai,
+                use_ai=True,
+                mode=RunMode.parse(batch_mode),
             )
         st.success("Batch preparation finished. Review every browser tab before submitting.")
         st.json(batch_summary)
