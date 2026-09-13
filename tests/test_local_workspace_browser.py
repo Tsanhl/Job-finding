@@ -254,6 +254,9 @@ def test_merged_dashboard_profile_history_and_daily_settings(tmp_path):
                     "button", name="Applied History", exact=False
                 ).click()
                 await page.get_by_text("COMPLETED USER REPORTED", exact=True).wait_for()
+                await page.get_by_role("button", name="Linked history", exact=True).click()
+                await page.get_by_role("button", name="Needs review", exact=True).click()
+                await page.get_by_role("button", name="First page", exact=True).click()
                 await page.get_by_role("button", name="Settings", exact=False).click()
                 await page.get_by_role(
                     "heading", name="Gmail assessment tracking"

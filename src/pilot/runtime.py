@@ -646,6 +646,8 @@ class Runtime:
             return self.background_job(
                 "gmail", lambda: self.tracking.sync(request["connection_id"])
             )
+        if op == "workspace_mail_page":
+            return self.tracking.message_page(request.get("view", "review"), request.get("limit", 50), request.get("cursor"))
         if op == "workspace_mail_messages":
             return self.tracking.messages()
         if op == "workspace_mail_resolve":

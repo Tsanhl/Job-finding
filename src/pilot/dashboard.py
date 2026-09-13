@@ -74,6 +74,7 @@ PUBLIC_COMMANDS = {
     "workspace_mail_configure",
     "workspace_mail_sync",
     "workspace_mail_messages",
+    "workspace_mail_page",
     "workspace_mail_resolve",
     "workspace_codex",
     "workspace_sources",

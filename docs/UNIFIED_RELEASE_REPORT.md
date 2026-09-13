@@ -57,3 +57,23 @@ Complete encrypted recovery restores a separate synthetic workspace with approve
 The final suite passed 253 tests and six subtests. Tests cover independent locally generated keys, owner-only permissions, restart preservation, verified online snapshots, daily/sleep cadence, disabled scheduling, additional-copy verification without key export, local retention, missing keys, failure preservation, graceful shutdown and fresh keys after restoration. The actual Chromium launcher verifies first-run automatic backup and Settings without displaying key contents. An exposed unlock-link creation race was fixed by atomically publishing the complete link.
 
 The existing local workspace generated and verified its first automatic encrypted backup. Its previous manual bundle/key pair remains present. No additional destination was configured, so off-device disaster protection remains unverified. No user key or backup is part of Git; the implementation creates them only in private local storage. Native Keychain/mailbox acceptance remains outside this validation.
+
+## Gmail review reliability amendment
+
+The real Gmail adapter is tested through mocked HTTP responses for 403 rate limits,
+429 Retry-After, permission failures, authentication failures and temporary service
+errors. Missing individual messages do not reset history or block valid following
+messages; other errors preserve the page for retry. Recruitment review and linked
+history filter before keyset pagination, including an older unresolved queue behind
+hundreds of irrelevant records.
+
+Bounded HTML extraction retains deadline wording without scripts or attachments.
+Generic next-step recruitment candidates fetch full content; unrelated history
+messages retain only processing records. Explicit provider/test/round identities
+and user-confirmed aliases preserve completed assessments when reminder wording
+changes. Uncertain identity remains in review instead of creating another task.
+
+This amendment uses synthetic data and intercepted HTTP only. It does not establish
+native Keychain, real Gmail, employer-form or off-device recovery acceptance. The
+existing distinction between verified local recovery and unverified off-device
+protection remains unchanged. See TEST_REPORT.md for the final suite result.

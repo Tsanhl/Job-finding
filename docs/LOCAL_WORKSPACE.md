@@ -102,3 +102,25 @@ Assessment reminders preserve completed states and attach their own deadline wor
 ## Automatic recovery
 
 The local runtime initializes a unique private recovery key and verified encrypted backup for each workspace, then runs daily while awake and running. Settings provides status, disable/enable, Back up now and an optional additional backup folder. Seven verified automatic local bundles are retained. The repository distributes no key material, personal records or backup files. Existing manual backup/key pairs remain unchanged. Missing keys are never silently replaced. See [RECOVERY.md](RECOVERY.md) for off-device copies, key custody, retention and restoration.
+
+### Gmail review and identity safeguards
+
+Gmail tracking retains its daily cadence after catch-up. Rate limits (including
+403 reason codes) and temporary failures use retry backoff and respect
+Retry-After; authentication failures require reconnecting, while permission
+restrictions show Check connection without discarding the connection. A deleted
+individual message is recorded as unavailable; unrelated failures preserve the
+page for retry. An expired history cursor starts bounded lookback reconciliation.
+
+Applied History separates paginated Needs review and Linked history. Irrelevant
+processing records do not consume either queue's page limit. HTML email text is
+extracted with bounded size, depth and part counts; scripts, styles and attachments
+are excluded. Initial recruitment search candidates and narrow next-step previews
+can fetch full content. Unrelated mailbox history does not trigger full-body reads.
+An inconclusive candidate remains Needs review; a missing deadline stays unknown.
+
+Assessment evidence uses an application-scoped sender domain, explicit test ID and
+round when available. Otherwise exact confirmed wording aliases can attach a
+reminder. Ambiguous reminders remain in Needs review; choose their specific
+assessment to link evidence. This preserves completed tasks and avoids fuzzy
+merging of different tests. Provider-specific URL identity parsing is not claimed.

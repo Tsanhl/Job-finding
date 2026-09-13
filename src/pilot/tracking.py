@@ -7,12 +7,13 @@ import base64
 import json
 import re
 import time
-from email.utils import getaddresses
+from email.utils import getaddresses, parsedate_to_datetime
+from html.parser import HTMLParser
 
 import httpx
 from cryptography.fernet import Fernet
 
-from .mail import Gmail
+from .mail import Gmail, GmailError
 from .secrets import NativeSecrets
 from .store import digest, encode
 from .workspace import AssessmentIdentityError
@@ -67,19 +68,48 @@ def parse_message(message):
         for h in message.get("payload", {}).get("headers", [])
     }
     chunks = []
+    class TextHTML(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.hidden = 0
+            self.text = []
+        def handle_starttag(self, tag, attrs):
+            if tag in {"script", "style", "head"}:
+                self.hidden += 1
+            if not self.hidden and tag in {"p", "br", "div", "li", "tr"}:
+                self.text.append("\n")
+        def handle_endtag(self, tag):
+            if tag in {"script", "style", "head"} and self.hidden:
+                self.hidden -= 1
+        def handle_data(self, data):
+            if not self.hidden:
+                self.text.append(data)
 
-    def visit(part):
-        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-            chunks.append(
-                base64.urlsafe_b64decode(part["body"]["data"] + "===").decode(
-                    errors="replace"
-                )[:100000]
-            )
-        for child in part.get("parts", []):
-            visit(child)
+    budget = 100000
+    visited = 0
+    def visit(part, depth=0):
+        nonlocal budget, visited
+        visited += 1
+        if depth > 20 or visited > 100 or budget <= 0:
+            return
+        data = part.get("body", {}).get("data", "")
+        mime = part.get("mimeType")
+        if mime in {"text/plain", "text/html"} and data and not part.get("filename"):
+            try:
+                raw = base64.urlsafe_b64decode(data[:140000] + "===").decode(errors="replace")[:budget]
+            except ValueError:
+                raw = ""
+            budget -= len(raw)
+            if mime == "text/html":
+                parser = TextHTML()
+                parser.feed(raw)
+                raw = "".join(parser.text)
+            chunks.append(raw)
+        for child in part.get("parts", [])[:100]:
+            visit(child, depth + 1)
 
     visit(message.get("payload", {}))
-    text = "\n".join(chunks) or str(message.get("snippet", ""))
+    text = "\n".join(chunks) or str(message.get("snippet", ""))[:100000]
     subject = headers.get("subject", "")
     content = (subject + "\n" + text).lower()
     if re.search(
@@ -204,12 +234,25 @@ class MailTracking:
         self.workspace.assert_app(app)
         kind = message["classification"]
         if kind == "ASSESSMENT":
+            content = evidence["excerpt"]
+            test = re.search(r"\b(?:test|assessment) ID\s*[:#]\s*([A-Za-z0-9_-]{1,100})", content, re.I)
+            round_match = re.search(r"\bround\s*[:#]?\s*(\d+)\b", content, re.I)
+            sender = getaddresses([evidence.get("sender", "")])
+            provider = sender[0][1].casefold().rpartition("@")[2] if sender else ""
+            stable = ("mail:" + digest([provider, test[1], round_match[1] if round_match else ""])) if test and provider else None
+            alias = "label:" + self.workspace.component_key(evidence["subject"] or "Online assessment")
+            known = self.store.one("SELECT assessment_id FROM assessment_keys WHERE application_id=? AND component_key=?", (app, alias))
+            if round_match and not stable:
+                return False  # A subject alias alone cannot identify a later round.
+            if not stable and not known and self.store.one("SELECT id FROM assessments WHERE application_id=?", (app,)):
+                return False
             try:
                 self.workspace.assessment(
                     app,
                     evidence["subject"] or "Online assessment",
                     evidence["deadline"],
                     message["id"],
+                    component_key=stable,
                 )
             except AssessmentIdentityError:
                 return (
@@ -251,6 +294,11 @@ class MailTracking:
                     raise ValueError(
                         "Choose an assessment belonging to this application"
                     )
+                alias = "label:" + self.workspace.component_key(evidence["subject"] or "Online assessment")
+                existing = self.store.one("SELECT assessment_id FROM assessment_keys WHERE application_id=? AND component_key=?", (app, alias))
+                if existing and existing["assessment_id"] != assessment_id:
+                    raise ValueError("This message wording already identifies another assessment")
+                self.store.db.execute("INSERT OR IGNORE INTO assessment_keys VALUES(?,?,?)", (app, alias, assessment_id))
                 self.store.db.execute(
                     "INSERT OR IGNORE INTO assessment_evidence VALUES(?,?,?,?)",
                     (assessment_id, id, evidence["deadline"], self.clock()),
@@ -269,10 +317,23 @@ class MailTracking:
         return {"linked": True}
 
     def messages(self):
+        return self.message_page()["items"]
+
+    def message_page(self, view="review", limit=50, cursor=None):
+        if view not in {"review", "linked"} or type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Choose review or linked mail and a page size from 1 to 100")
+        where = "classification NOT IN ('OTHER','UNAVAILABLE') AND resolved=?"
+        args = [int(view == "linked")]
+        if cursor:
+            if not isinstance(cursor, list) or len(cursor) != 2:
+                raise ValueError("Invalid mail cursor")
+            where += " AND (received < ? OR (received = ? AND id < ?))"
+            args += [float(cursor[0]), float(cursor[0]), str(cursor[1])]
+        rows = self.store.rows(
+            "SELECT * FROM recruitment_messages WHERE " + where +
+            " ORDER BY received DESC,id DESC LIMIT ?", (*args, limit + 1))
         result = []
-        for row in self.store.rows(
-            "SELECT * FROM recruitment_messages ORDER BY received DESC LIMIT 200"
-        ):
+        for row in rows[:limit]:
             try:
                 evidence = self.vault.open(row["protected_payload"])
             except Exception:
@@ -284,7 +345,8 @@ class MailTracking:
             result.append(
                 {k: v for k, v in row.items() if k != "protected_payload"} | evidence
             )
-        return result
+        last = rows[limit - 1] if len(rows) > limit else None
+        return {"items": result, "next_cursor": [last["received"], last["id"]] if last else None}
 
     async def sync(self, connection):
         lock = self.locks.setdefault(connection, asyncio.Lock())
@@ -318,12 +380,17 @@ class MailTracking:
                 status = "RETRY_PENDING"
                 delay = min(RETRY_MAX, RETRY_BASE * 2 ** min(row["failures"], 6))
                 if isinstance(error, httpx.HTTPStatusError):
-                    if error.response.status_code in (401, 403):
+                    if (isinstance(error, GmailError) and error.category in {"authentication", "permission"}) or (not isinstance(error, GmailError) and error.response.status_code in (401, 403)):
                         status, delay = "CHECK_CONNECTION", DAY
                     else:
                         retry = error.response.headers.get("Retry-After", "")
                         if retry.isdigit():
-                            delay = min(RETRY_MAX, max(delay, int(retry)))
+                            delay = max(delay, int(retry))
+                        elif retry:
+                            try:
+                                delay = max(delay, parsedate_to_datetime(retry).timestamp() - self.clock())
+                            except (ValueError, TypeError, OverflowError):
+                                pass
                 self.store.db.execute(
                     "UPDATE mail_tracking SET lease_until=0,status=?,next_due=?,failures=failures+1 WHERE connection_id=? AND lease_until=?",
                     (status, self.clock() + delay, connection, lease),
@@ -389,21 +456,37 @@ class MailTracking:
                 (connection, id),
             ):
                 continue
-            message = await self.gmail.request(
-                connection, "/messages/" + id, {"format": "metadata"}
-            )
-            preview = parse_message(message)
-            if preview["kind"] != "OTHER":
+            try:
                 message = await self.gmail.request(
-                    connection, "/messages/" + id, {"format": "full"}
+                    connection, "/messages/" + id, {"format": "metadata"}
                 )
-            else:
-                # Do not retain non-recruitment subjects or snippets from mailbox history.
-                message = {**message, "snippet": "", "payload": {}}
-            evidence = parse_message(message)
+                preview = parse_message(message)
+                # Initial search already supplies a recruitment-content candidate.
+                # History is mailbox-wide: fetch only explicit recruitment previews or
+                # narrow next-step wording; never ingest every history message body.
+                candidate = mode == "initial" or preview["kind"] != "OTHER" or bool(
+                    re.search(r"\b(next step|action required|invitation|recruitment|careers)\b",
+                              preview["subject"] + " " + preview["sender"], re.I))
+                if candidate:
+                    message = await self.gmail.request(
+                        connection, "/messages/" + id, {"format": "full"}
+                    )
+                    evidence = parse_message(message)
+                    if evidence["kind"] == "OTHER":
+                        evidence["kind"] = "NEEDS_REVIEW"
+                else:
+                    message = {**message, "snippet": "", "payload": {}}
+                    evidence = parse_message(message)
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code != 404:
+                    raise
+                # A deleted message is distinct from an expired /history cursor.
+                message = {}
+                evidence = parse_message(message)
+                evidence["kind"] = "UNAVAILABLE"
             app = (
                 self.match(evidence, connection)
-                if evidence["kind"] != "OTHER"
+                if evidence["kind"] not in {"OTHER", "UNAVAILABLE", "NEEDS_REVIEW"}
                 else None
             )
             key = digest([connection, id])

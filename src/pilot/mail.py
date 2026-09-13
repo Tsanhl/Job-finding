@@ -21,6 +21,35 @@ SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 
+class GmailError(httpx.HTTPStatusError):
+    """Structured, privacy-safe provider failure; retain response retry metadata."""
+
+    def __init__(self, response):
+        try:
+            errors = response.json().get("error", {}).get("errors", [])
+            self.reasons = tuple(e.get("reason", "") for e in errors)
+        except (ValueError, AttributeError, TypeError):
+            self.reasons = ()
+        code = response.status_code
+        if code == 401:
+            self.category = "authentication"
+        elif code == 429 or (code == 403 and set(self.reasons) & {
+            "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded",
+            "dailyLimitExceeded", "sharingRateLimitExceeded",
+        }):
+            self.category = "rate_limit"
+        elif code == 403:
+            self.category = "permission"
+        elif code >= 500:
+            self.category = "temporary"
+        elif code == 404:
+            self.category = "missing"
+        else:
+            self.category = "request"
+        super().__init__("Gmail request failed: " + self.category,
+                         request=response.request, response=response)
+
+
 class Gmail:
     def __init__(self, store, backend=None, transport=None):
         self.store = store
@@ -86,7 +115,10 @@ class Gmail:
         if not credential.valid:
             try:
                 await asyncio.to_thread(credential.refresh, Request())
-            except Exception:
+            except Exception as error:
+                from google.auth.exceptions import RefreshError
+                if not isinstance(error, RefreshError) or getattr(error, "retryable", False):
+                    raise ValueError("Temporary Gmail token refresh failure") from None
                 self.store.db.execute(
                     "UPDATE mail_connections SET status='RECONNECT' WHERE id=?",
                     (connection["id"],),
@@ -106,15 +138,14 @@ class Gmail:
             response = await client.get(
                 API + path, params=params, headers={"Authorization": "Bearer " + token}
             )
-            if response.status_code in (401, 403):
-                self.store.db.execute(
-                    "UPDATE mail_connections SET status='RECONNECT' WHERE id=?",
-                    (connection_id,),
-                )
-                raise ValueError("Reconnect Gmail")
-            if response.status_code == 429:
-                raise ValueError("Gmail rate limit; retry later")
-            response.raise_for_status()
+            if response.is_error:
+                error = GmailError(response)
+                if error.category == "authentication":
+                    self.store.db.execute(
+                        "UPDATE mail_connections SET status='RECONNECT' WHERE id=?",
+                        (connection_id,),
+                    )
+                raise error
             return response.json()
 
     async def status(self, connection_id):
