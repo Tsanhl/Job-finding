@@ -1148,13 +1148,12 @@ class Runtime:
         if op == "gmail_connections":
             return self.store.rows("SELECT id,email,status FROM mail_connections")
         if op in {"gmail_connect", "gmail_status", "gmail_disconnect", "gmail_revoke"}:
-            from .mail import Gmail
+            from .mail import Gmail, load_desktop_config
 
             gmail = Gmail(self.store)
             if op == "gmail_connect":
-                config = json.loads(
-                    Path(request["config_path"]).expanduser().read_text()
-                )
+                config = load_desktop_config(request.get("config_path"), request.get("email"))
+                request = {**request, "email": request["email"].strip()}
                 job = uid()
                 self.mail_jobs[job] = {"state": "CONNECTING"}
                 email = request["email"].casefold()

@@ -10,6 +10,7 @@ import re
 import socket
 import time
 from email.utils import parseaddr
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -19,6 +20,36 @@ from .store import encode, uid
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def load_desktop_config(config_path, email):
+    """Validate local setup before creating a consent job; never echo its contents."""
+    if not isinstance(email, str) or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip()):
+        raise ValueError("Enter the Gmail account you want to connect.")
+    if not isinstance(config_path, str) or not config_path.strip():
+        raise ValueError("Choose your Google Desktop OAuth client JSON file first. See Gmail setup in Settings.")
+    try:
+        path = Path(config_path.strip()).expanduser()
+        if not path.is_file() or path.stat().st_size > 65536:
+            raise OSError()
+        config = json.loads(path.read_text())
+    except (OSError, ValueError, UnicodeError):
+        raise ValueError("Cannot read a valid OAuth JSON file. Check the local file path and permissions.") from None
+    installed = config.get("installed") if isinstance(config, dict) else None
+    if not isinstance(installed, dict) or not all(
+        isinstance(installed.get(key), str) and installed[key].strip()
+        for key in ("client_id", "client_secret", "auth_uri", "token_uri")
+    ):
+        raise ValueError("Download an OAuth client of type Desktop app; a web client or service-account file will not work.")
+    if installed["auth_uri"] not in {
+        "https://accounts.google.com/o/oauth2/auth",
+        "https://accounts.google.com/o/oauth2/v2/auth",
+    } or installed["token_uri"] not in {
+        "https://oauth2.googleapis.com/token",
+        "https://accounts.google.com/o/oauth2/token",
+    }:
+        raise ValueError("The OAuth file must use Google's official authorization and token endpoints.")
+    return {"installed": installed}
 
 
 class GmailError(httpx.HTTPStatusError):
